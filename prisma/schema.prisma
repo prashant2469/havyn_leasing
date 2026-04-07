@@ -1,0 +1,897 @@
+// Havyn V2 — Channel-Aware Listing Syndication + Multi-Source Inquiry Handling
+// Channel adapters (Twilio, SendGrid, Zillow API, etc.) write to Message/ListingChannelSync only.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- Tenancy ---
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships      Membership[]
+  properties       Property[]
+  leads            Lead[]
+  listings         Listing[]
+  conversations    Conversation[]
+  activityEvents   ActivityEvent[]
+  aiActions        AIAction[]
+  handoffEvents    HumanHandoffEvent[]
+  leases           Lease[]
+  residents        Resident[]
+  // V3 AI
+  conversationSummaries ConversationSummary[]
+  replyDrafts           AIReplyDraft[]
+  suggestedActions      AISuggestedAction[]
+  escalationFlags       AIEscalationFlag[]
+  prioritySignals       LeadPrioritySignal[]
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships              Membership[]
+  leadsAssigned            Lead[]                @relation("LeadAssignee")
+  messagesAuthored         Message[]             @relation("MessageUserAuthor")
+  activityEvents           ActivityEvent[]       @relation("ActivityActor")
+  aiActionsReviewed        AIAction[]            @relation("AIActionReviewer")
+  handoffsFrom             HumanHandoffEvent[]   @relation("HandoffFrom")
+  handoffsTo               HumanHandoffEvent[]   @relation("HandoffTo")
+  channelSyncsRequested    ListingChannelSync[]  @relation("SyncRequestedBy")
+  // V3 AI
+  replyDraftsReviewed      AIReplyDraft[]        @relation("ReplyDraftReviewer")
+  suggestedActionsActioned AISuggestedAction[]   @relation("SuggestedActionActioned")
+  escalationsResolved      AIEscalationFlag[]    @relation("EscalationResolver")
+}
+
+enum MembershipRole {
+  OWNER
+  ADMIN
+  MANAGER
+  STAFF
+}
+
+model Membership {
+  id             String         @id @default(cuid())
+  userId         String
+  organizationId String
+  role           MembershipRole @default(STAFF)
+  createdAt      DateTime       @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+// --- Properties & units ---
+
+enum PropertyStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model Property {
+  id             String         @id @default(cuid())
+  organizationId String
+  name           String
+  street         String
+  city           String
+  state          String
+  postalCode     String
+  country        String         @default("US")
+  status         PropertyStatus @default(ACTIVE)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  units        Unit[]
+  leads        Lead[]
+
+  @@index([organizationId, status])
+}
+
+enum UnitStatus {
+  VACANT
+  NOTICE
+  OCCUPIED
+  DOWN
+}
+
+model Unit {
+  id         String     @id @default(cuid())
+  propertyId String
+  unitNumber String
+  beds       Float?
+  baths      Float?
+  sqft       Int?
+  status     UnitStatus @default(VACANT)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  property               Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  listings               Listing[]
+  leadsPrimaryInterest   Lead[]    @relation("LeadPrimaryUnit")
+  leases                 Lease[]
+
+  @@unique([propertyId, unitNumber])
+  @@index([propertyId])
+}
+
+// --- Listing Hub (V2: syndication-ready) ---
+
+enum ListingStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  RENTED
+  ARCHIVED
+}
+
+model Listing {
+  id             String        @id @default(cuid())
+  organizationId String
+  unitId         String
+  title          String
+  description    String?       @db.Text
+  monthlyRent    Decimal       @db.Decimal(12, 2)
+  availableFrom  DateTime?
+  bedrooms       Float?
+  bathrooms      Float?
+  amenities      Json          @default("[]")
+  petPolicy      String?
+  status         ListingStatus @default(DRAFT)
+  // V2 syndication lifecycle
+  publishedAt    DateTime?
+  offMarketAt    DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization  Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  unit          Unit              @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  photos        ListingPhoto[]
+  channels      ListingChannel[]
+  leads         Lead[]
+  tours         Tour[]
+  conversations Conversation[]
+
+  @@index([organizationId, status])
+  @@index([unitId])
+}
+
+model ListingPhoto {
+  id         String   @id @default(cuid())
+  listingId  String
+  storageKey String
+  url        String?
+  sortOrder  Int      @default(0)
+  caption    String?
+  isPrimary  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, sortOrder])
+}
+
+// V2: unified channel type used for both listing distribution and inquiry attribution
+enum ListingChannelType {
+  WEBSITE
+  ZILLOW
+  FACEBOOK_MARKETPLACE
+  EMAIL
+  SMS
+  MANUAL
+  OTHER
+}
+
+// V1 compat: kept for existing data; V2 prefers ChannelPublishState
+enum ChannelPublishStatus {
+  NOT_CONNECTED
+  PENDING
+  LIVE
+  ERROR
+  PAUSED
+}
+
+// V2: richer publish state for per-channel listing lifecycle
+enum ChannelPublishState {
+  DRAFT
+  QUEUED
+  PUBLISHED
+  PAUSED
+  UNPUBLISHED
+  SYNC_ERROR
+}
+
+// Reply mode per channel — drives how outbound messages are handled
+enum ConversationReplyMode {
+  IN_CHANNEL_REPLY
+  REDIRECT_TO_OWNED_CHANNEL
+  MANUAL_ONLY
+}
+
+model ListingChannel {
+  id             String               @id @default(cuid())
+  listingId      String
+  channelType    ListingChannelType
+  // V1 compat field — keep for existing reads; V2 also writes publishState
+  publishStatus  ChannelPublishStatus @default(NOT_CONNECTED)
+  // V2 richer state
+  publishState   ChannelPublishState  @default(DRAFT)
+  externalListingId String?
+  replyModeDefault  ConversationReplyMode @default(MANUAL_ONLY)
+  lastSyncedAt      DateTime?
+  lastPublishedAt   DateTime?
+  lastUnpublishedAt DateTime?
+  lastSyncError     String?
+  metadata       Json                 @default("{}")
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  listing Listing              @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  syncs   ListingChannelSync[]
+
+  @@unique([listingId, channelType])
+  @@index([listingId])
+  @@index([publishState])
+}
+
+enum ChannelSyncStatus {
+  IDLE
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum ChannelSyncOperation {
+  PUBLISH
+  UPDATE
+  UNPUBLISH
+  RETRY
+  INGEST_TEST
+}
+
+model ListingChannelSync {
+  id                  String               @id @default(cuid())
+  listingChannelId    String
+  operation           ChannelSyncOperation @default(PUBLISH)
+  status              ChannelSyncStatus    @default(RUNNING)
+  startedAt           DateTime             @default(now())
+  completedAt         DateTime?
+  errorMessage        String?
+  requestPayload      Json                 @default("{}")
+  resultPayload       Json                 @default("{}")
+  requestedByUserId   String?
+
+  listingChannel    ListingChannel @relation(fields: [listingChannelId], references: [id], onDelete: Cascade)
+  requestedByUser   User?          @relation("SyncRequestedBy", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([listingChannelId, startedAt])
+  @@index([requestedByUserId])
+}
+
+// --- Leasing: leads, inbox, qualification ---
+
+enum LeadInboxStage {
+  NEW_LEADS
+  AWAITING_RESPONSE
+  TOUR_SCHEDULED
+  APPLICATION_STARTED
+  NEEDS_HUMAN_REVIEW
+  COLD_LEADS
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  TOURING
+  APPLIED
+  CONVERTED
+  LOST
+}
+
+enum NextActionType {
+  CALL
+  EMAIL
+  SMS
+  TOUR
+  FOLLOW_UP
+  OTHER
+}
+
+model Lead {
+  id                   String                @id @default(cuid())
+  organizationId       String
+  propertyId           String?
+  primaryUnitId        String?
+  listingId            String?
+  firstName            String
+  lastName             String
+  email                String?
+  phone                String?
+  // V1: freeform string; V2: use sourceChannelType for structured attribution
+  source               String?
+  // V2 structured channel attribution
+  sourceChannelType    ListingChannelType?
+  sourceChannelRefId   String?
+  sourceAttribution    Json                  @default("{}")
+  // Funnel timestamps for channel analytics
+  firstResponseAt      DateTime?
+  lastResponseAt       DateTime?
+  tourBookedAt         DateTime?
+  applicationStartedAt DateTime?
+  convertedAt          DateTime?
+  status               LeadStatus            @default(NEW)
+  inboxStage           LeadInboxStage        @default(NEW_LEADS)
+  assignedToUserId     String?
+  nextActionAt         DateTime?
+  nextActionType       NextActionType?
+  notes                String?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  organization      Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  property          Property?               @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  primaryUnit       Unit?                   @relation("LeadPrimaryUnit", fields: [primaryUnitId], references: [id], onDelete: SetNull)
+  listing           Listing?                @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  assignedTo        User?                   @relation("LeadAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  tours             Tour[]
+  applications      Application[]
+  conversations     Conversation[]
+  qualifications    QualificationAnswer[]
+  aiActions         AIAction[]
+  handoffEvents     HumanHandoffEvent[]
+  channelIdentities ContactChannelIdentity[]
+  // V3 AI
+  conversationSummaries ConversationSummary[]
+  replyDrafts           AIReplyDraft[]
+  suggestedActions      AISuggestedAction[]
+  escalationFlags       AIEscalationFlag[]
+  prioritySignal        LeadPrioritySignal?
+
+  @@index([organizationId, inboxStage])
+  @@index([organizationId, status])
+  @@index([listingId])
+  @@index([assignedToUserId])
+  @@index([sourceChannelType])
+}
+
+// V2: contact identity per channel — enables dedup and future webhook-based matching
+model ContactChannelIdentity {
+  id          String             @id @default(cuid())
+  leadId      String
+  channelType ListingChannelType
+  handle      String             // email address / phone / external user id
+  displayName String?
+  externalId  String?
+  metadata    Json               @default("{}")
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([leadId, channelType, handle])
+  @@index([leadId])
+  @@index([channelType, handle])
+}
+
+model QualificationAnswer {
+  id        String              @id @default(cuid())
+  leadId    String
+  key       String
+  value     Json
+  source    QualificationSource @default(MANUAL)
+  metadata  Json                @default("{}")
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([leadId, key])
+  @@index([leadId])
+}
+
+enum QualificationSource {
+  MANUAL
+  AI_EXTRACTED
+  IMPORTED
+}
+
+// --- Tours ---
+
+enum TourStatus {
+  SCHEDULED
+  COMPLETED
+  NO_SHOW
+  CANCELLED
+}
+
+model Tour {
+  id           String     @id @default(cuid())
+  leadId       String
+  listingId    String?
+  scheduledAt  DateTime
+  status       TourStatus @default(SCHEDULED)
+  notes        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  lead    Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  listing Listing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+
+  @@index([leadId])
+  @@index([listingId])
+  @@index([scheduledAt])
+}
+
+enum ApplicationStatus {
+  SUBMITTED
+  IN_REVIEW
+  APPROVED
+  DECLINED
+  WITHDRAWN
+}
+
+model Application {
+  id        String            @id @default(cuid())
+  leadId    String
+  status    ApplicationStatus @default(SUBMITTED)
+  payload   Json              @default("{}")
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  lead          Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  lease         Lease?
+  conversations Conversation[]
+
+  @@index([leadId])
+  @@index([status])
+}
+
+// --- Communications (V2: channel-aware thread envelope) ---
+
+model Conversation {
+  id                   String                 @id @default(cuid())
+  organizationId       String
+  subject              String?
+  leadId               String?
+  listingId            String?
+  applicationId        String?
+  leaseId              String?
+  // V2 channel-aware fields
+  channelType          ListingChannelType?
+  replyMode            ConversationReplyMode  @default(MANUAL_ONLY)
+  externalThreadId     String?
+  externalConversationRef String?
+  sourceMetadata       Json                   @default("{}")
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+
+  organization        Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead                Lead?               @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  listing             Listing?            @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  application         Application?        @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  lease               Lease?              @relation(fields: [leaseId], references: [id], onDelete: Cascade)
+  messages            Message[]
+  communicationEvents CommunicationEvent[]
+  aiActions           AIAction[]
+  // V3 AI
+  summaries           ConversationSummary[]
+  replyDrafts         AIReplyDraft[]
+  suggestedActions    AISuggestedAction[]
+  escalationFlags     AIEscalationFlag[]
+
+  @@index([organizationId])
+  @@index([leadId])
+  @@index([listingId])
+  @@index([channelType])
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageChannel {
+  SMS
+  EMAIL
+  VOICE
+  IN_APP
+  OTHER
+}
+
+enum MessageAuthorType {
+  USER
+  AI
+  SYSTEM
+  CONTACT
+}
+
+model Message {
+  id              String            @id @default(cuid())
+  conversationId  String
+  direction       MessageDirection
+  channel         MessageChannel
+  body            String            @db.Text
+  sentAt          DateTime          @default(now())
+  authorType      MessageAuthorType
+  authorUserId    String?
+  isAiGenerated   Boolean           @default(false)
+  provider        String?
+  externalId      String?
+  channelMetadata Json              @default("{}")
+  createdAt       DateTime          @default(now())
+
+  conversation Conversation         @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  authorUser   User?                @relation("MessageUserAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+  events       CommunicationEvent[]
+  // V3: if this message was sent from an approved AI draft
+  sentFromDraft AIReplyDraft?       @relation("DraftSentMessage")
+
+  @@index([conversationId, sentAt])
+}
+
+enum CommunicationEventType {
+  DELIVERED
+  BOUNCED
+  OPENED
+  CALL_COMPLETED
+  NOTE
+}
+
+model CommunicationEvent {
+  id             String                 @id @default(cuid())
+  conversationId String
+  messageId      String?
+  type           CommunicationEventType
+  metadata       Json                   @default("{}")
+  occurredAt     DateTime               @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message      Message?     @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, occurredAt])
+}
+
+// --- Activity (append-only) ---
+
+model ActivityEvent {
+  id             String   @id @default(cuid())
+  organizationId String
+  actorUserId    String?
+  verb           String
+  entityType     String
+  entityId       String
+  metadata       Json     @default("{}")
+  payloadBefore  Json?
+  payloadAfter   Json?
+  correlationId  String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor        User?        @relation("ActivityActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, entityType, entityId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+// --- AI Copilot V3 ---
+
+// V1 legacy — kept for backward compat; new code uses structured V3 models below
+enum AIActionType {
+  DRAFT_REPLY
+  CONVERSATION_SUMMARY
+  SUGGESTED_NEXT_ACTION
+  QUALIFICATION_EXTRACT
+  ESCALATION_FLAG
+}
+
+enum AIActionStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  APPLIED
+  DISMISSED
+}
+
+model AIAction {
+  id               String         @id @default(cuid())
+  organizationId   String
+  leadId           String
+  conversationId   String?
+  type             AIActionType
+  status           AIActionStatus @default(PENDING_REVIEW)
+  content          Json           @default("{}")
+  modelId          String?
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  reviewedBy   User?         @relation("AIActionReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
+  @@index([leadId])
+  @@index([conversationId])
+}
+
+// --- V3: Structured AI models ---
+
+enum AIUrgency {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+/// One summary per analysis run; latest non-stale = current summary for the conversation.
+model ConversationSummary {
+  id               String    @id @default(cuid())
+  organizationId   String
+  leadId           String
+  conversationId   String
+  summaryText      String    @db.Text
+  currentIntent    String?
+  urgency          AIUrgency @default(NORMAL)
+  // JSON array of strings, e.g. ["Missing income", "Move-in date not confirmed"]
+  qualificationGaps Json     @default("[]")
+  recommendedNextStep String?
+  isStale          Boolean   @default(false)
+  modelId          String?
+  promptVersion    String?
+  generatedAt      DateTime  @default(now())
+  createdAt        DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([leadId])
+  @@index([conversationId, generatedAt])
+}
+
+enum AIReplyDraftStatus {
+  SUGGESTED
+  APPROVED
+  REJECTED
+  SENT
+  SUPERSEDED
+}
+
+/// AI-generated draft reply tied to a conversation.
+model AIReplyDraft {
+  id               String             @id @default(cuid())
+  organizationId   String
+  leadId           String
+  conversationId   String
+  body             String             @db.Text
+  suggestedChannel MessageChannel     @default(IN_APP)
+  contextNote      String?
+  status           AIReplyDraftStatus @default(SUGGESTED)
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  // Filled when draft is sent; links to the resulting Message row
+  sentMessageId    String?            @unique
+  modelId          String?
+  promptVersion    String?
+  generatedAt      DateTime           @default(now())
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  reviewedBy   User?        @relation("ReplyDraftReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  sentMessage  Message?     @relation("DraftSentMessage", fields: [sentMessageId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([leadId])
+  @@index([conversationId, status])
+}
+
+enum AISuggestedActionType {
+  REPLY_NOW
+  ASK_QUALIFICATION
+  OFFER_TOUR_TIMES
+  SEND_APPLICATION_INVITE
+  HAND_OFF_TO_HUMAN
+  FOLLOW_UP_24H
+  MARK_QUALIFIED
+  OTHER
+}
+
+enum AISuggestedActionStatus {
+  PENDING
+  ACCEPTED
+  DISMISSED
+  EXPIRED
+}
+
+model AISuggestedAction {
+  id               String                  @id @default(cuid())
+  organizationId   String
+  leadId           String
+  conversationId   String?
+  actionType       AISuggestedActionType
+  title            String
+  description      String?
+  priority         Int                     @default(0)
+  status           AISuggestedActionStatus @default(PENDING)
+  actionedByUserId String?
+  actionedAt       DateTime?
+  expiresAt        DateTime?
+  modelId          String?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  actionedBy   User?         @relation("SuggestedActionActioned", fields: [actionedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([leadId])
+  @@index([status])
+}
+
+enum AIEscalationReason {
+  POLICY_EXCEPTION
+  UPSET_LEAD
+  UNCLEAR_INTENT
+  UNSUPPORTED_CHANNEL_REPLY
+  LOW_CONFIDENCE
+  COMPLEX_SITUATION
+  URGENT_RESPONSE_NEEDED
+}
+
+enum AIEscalationStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  FALSE_POSITIVE
+}
+
+model AIEscalationFlag {
+  id               String             @id @default(cuid())
+  organizationId   String
+  leadId           String
+  conversationId   String?
+  reason           AIEscalationReason
+  notes            String?
+  confidenceScore  Float?
+  status           AIEscalationStatus @default(OPEN)
+  resolvedByUserId String?
+  resolvedAt       DateTime?
+  resolutionNote   String?
+  modelId          String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  resolvedBy   User?         @relation("EscalationResolver", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
+  @@index([leadId])
+}
+
+enum LeadPriorityTier {
+  URGENT
+  HIGH
+  NORMAL
+  LOW
+  COLD
+}
+
+/// One priority record per lead (upserted on each analysis run).
+model LeadPrioritySignal {
+  id                    String           @id @default(cuid())
+  organizationId        String
+  leadId                String           @unique
+  priorityTier          LeadPriorityTier @default(NORMAL)
+  // JSON array of human-readable signal strings
+  signals               Json             @default("[]")
+  scoreRaw              Float?
+  isHotLead             Boolean          @default(false)
+  isAtRisk              Boolean          @default(false)
+  needsImmediateResponse Boolean         @default(false)
+  isQualifiedForTour    Boolean          @default(false)
+  modelId               String?
+  computedAt            DateTime         @default(now())
+  expiresAt             DateTime?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, priorityTier])
+}
+
+model HumanHandoffEvent {
+  id             String   @id @default(cuid())
+  organizationId String
+  leadId         String
+  fromUserId     String?
+  toUserId       String?
+  reason         String?
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  fromUser     User?        @relation("HandoffFrom", fields: [fromUserId], references: [id], onDelete: SetNull)
+  toUser       User?        @relation("HandoffTo", fields: [toUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([leadId])
+}
+
+// --- Legacy lease stack ---
+
+model Resident {
+  id             String   @id @default(cuid())
+  organizationId String
+  firstName      String
+  lastName       String
+  email          String?
+  phone          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  leases       Lease[]
+
+  @@index([organizationId])
+}
+
+enum LeaseStatus {
+  DRAFT
+  PENDING
+  ACTIVE
+  ENDED
+}
+
+model Lease {
+  id             String      @id @default(cuid())
+  organizationId String
+  unitId         String
+  residentId     String
+  applicationId  String?     @unique
+  startDate      DateTime
+  endDate        DateTime?
+  status         LeaseStatus @default(DRAFT)
+  rentAmount     Decimal     @db.Decimal(12, 2)
+  depositAmount  Decimal?    @db.Decimal(12, 2)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  unit          Unit           @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  resident      Resident       @relation(fields: [residentId], references: [id], onDelete: Restrict)
+  application   Application?   @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  conversations Conversation[]
+
+  @@index([organizationId, status])
+}
