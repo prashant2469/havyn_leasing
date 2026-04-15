@@ -3,12 +3,28 @@ import type { InputJsonValue } from "@prisma/client/runtime/library";
 import { prisma } from "@/server/db/client";
 import type { OrgContext } from "@/server/auth/context";
 
+/** Logged-in user (dashboard / API). */
+export type ActivitySourceContext =
+  | OrgContext
+  /** Public microsite or other unauthenticated flows — no actor user. */
+  | { organizationId: string; actorUserId: null };
+
+function resolveActivityActor(source: ActivitySourceContext): {
+  organizationId: string;
+  actorUserId: string | null;
+} {
+  if ("userId" in source) {
+    return { organizationId: source.organizationId, actorUserId: source.userId };
+  }
+  return source;
+}
+
 /**
  * Append-only activity log. Call from domain services after successful writes.
  * TODO: emit same payload to a queue (e.g. Temporal, Inngest) for webhooks / analytics.
  */
 export type RecordActivityInput = {
-  ctx: OrgContext;
+  ctx: ActivitySourceContext;
   verb: string;
   entityType: string;
   entityId: string;
@@ -20,10 +36,11 @@ export type RecordActivityInput = {
 
 export async function recordActivity(input: RecordActivityInput) {
   const { ctx, ...rest } = input;
+  const { organizationId, actorUserId } = resolveActivityActor(ctx);
   return prisma.activityEvent.create({
     data: {
-      organizationId: ctx.organizationId,
-      actorUserId: ctx.userId,
+      organizationId,
+      actorUserId,
       verb: rest.verb,
       entityType: rest.entityType,
       entityId: rest.entityId,

@@ -8,6 +8,7 @@ import {
   ListingChannelType,
   ListingStatus,
 } from "@prisma/client";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect } from "react";
 
@@ -41,6 +42,9 @@ import {
   retryListingChannelSyncAction,
   unpublishListingChannelAction,
 } from "@/server/actions/channel";
+import { CopyTextButton } from "@/components/shell/copy-button";
+import { prospectListingAbsoluteUrl, prospectListingPath } from "@/lib/public-url";
+import { CheckIcon, CircleIcon } from "lucide-react";
 import { attachListingChannelAction, updateListingAction } from "@/server/actions/listings";
 
 type SyncRun = {
@@ -78,7 +82,9 @@ type ListingPayload = {
   amenities: unknown;
   petPolicy: string | null;
   status: ListingStatus;
+  publicSlug: string | null;
   unitId: string;
+  organization: { slug: string; name: string };
   unit: { unitNumber: string; property: { id: string; name: string } };
   photos: {
     id: string;
@@ -216,6 +222,17 @@ export function ListingDetailForm({ listing }: { listing: ListingPayload }) {
     (t) => !listing.channels.some((c) => c.channelType === t),
   );
 
+  const websiteChannel = listing.channels.find((c) => c.channelType === ListingChannelType.WEBSITE);
+  const websitePublished = websiteChannel?.publishState === ChannelPublishState.PUBLISHED;
+  const prospectPath =
+    listing.publicSlug && websitePublished
+      ? prospectListingPath(listing.organization.slug, listing.publicSlug)
+      : "";
+  const prospectAbsolute =
+    listing.publicSlug && websitePublished
+      ? prospectListingAbsoluteUrl(listing.organization.slug, listing.publicSlug)
+      : "";
+
   return (
     <div className="space-y-6">
       <div className="grid gap-6 lg:grid-cols-2">
@@ -235,6 +252,20 @@ export function ListingDetailForm({ listing }: { listing: ListingPayload }) {
               <div className="space-y-2">
                 <Label htmlFor="title">Title</Label>
                 <Input id="title" name="title" required defaultValue={listing.title} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="publicSlug">Public URL slug</Label>
+                <Input
+                  id="publicSlug"
+                  name="publicSlug"
+                  placeholder="e.g. foundry-101"
+                  defaultValue={listing.publicSlug ?? ""}
+                  autoComplete="off"
+                />
+                <p className="text-muted-foreground text-xs">
+                  Lowercase letters, numbers, and hyphens. Used in the prospect link{" "}
+                  <code className="bg-muted rounded px-1">/r/{listing.organization.slug}/…</code>
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="description">Description</Label>
@@ -357,6 +388,73 @@ export function ListingDetailForm({ listing }: { listing: ListingPayload }) {
           </CardContent>
         </Card>
       </div>
+
+      <div className="bg-muted/30 flex flex-col gap-3 rounded-lg border px-4 py-3 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div>
+          <p className="text-foreground font-medium">Public microsite readiness</p>
+          <p className="text-muted-foreground text-xs">
+            Live when you have a slug and the Website channel is published.
+          </p>
+        </div>
+        <ul className="text-muted-foreground flex flex-col gap-1.5 text-xs sm:items-end">
+          <li className="flex items-center gap-2">
+            {listing.publicSlug ? (
+              <CheckIcon className="text-green-600 size-3.5 shrink-0 dark:text-green-400" aria-hidden />
+            ) : (
+              <CircleIcon className="size-3.5 shrink-0 opacity-40" aria-hidden />
+            )}
+            Public slug set
+          </li>
+          <li className="flex items-center gap-2">
+            {websitePublished ? (
+              <CheckIcon className="text-green-600 size-3.5 shrink-0 dark:text-green-400" aria-hidden />
+            ) : (
+              <CircleIcon className="size-3.5 shrink-0 opacity-40" aria-hidden />
+            )}
+            Website channel published
+          </li>
+          <li>
+            {prospectPath ? (
+              <Link
+                href={prospectPath}
+                target="_blank"
+                rel="noreferrer"
+                className="text-primary inline-flex items-center gap-1 font-medium underline-offset-4 hover:underline"
+              >
+                Open public preview
+              </Link>
+            ) : (
+              <span className="opacity-70">Preview available when live</span>
+            )}
+          </li>
+        </ul>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Prospect microsite</CardTitle>
+        </CardHeader>
+        <CardContent className="text-muted-foreground space-y-3 text-sm">
+          {!listing.publicSlug ? (
+            <p>Set a public URL slug above, publish the Website channel, then share the link with prospects.</p>
+          ) : !websitePublished ? (
+            <p>
+              This listing has slug <code className="bg-muted rounded px-1">{listing.publicSlug}</code> but the
+              Website channel is not published yet — publish it to go live.
+            </p>
+          ) : (
+            <>
+              <p className="text-foreground text-xs font-medium">Shareable URL</p>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <code className="bg-muted max-w-full flex-1 truncate rounded px-2 py-1.5 text-xs">
+                  {prospectAbsolute || prospectPath}
+                </code>
+                <CopyTextButton text={prospectAbsolute || prospectPath} />
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Channel management */}
       <Card>

@@ -1,6 +1,7 @@
 import { LeadInboxStage } from "@prisma/client";
 
 export const inboxQueueOrder: LeadInboxStage[] = [
+  LeadInboxStage.NEW_INQUIRY,
   LeadInboxStage.NEW_LEADS,
   LeadInboxStage.AWAITING_RESPONSE,
   LeadInboxStage.TOUR_SCHEDULED,
@@ -10,6 +11,7 @@ export const inboxQueueOrder: LeadInboxStage[] = [
 ];
 
 export const inboxStageLabel: Record<LeadInboxStage, string> = {
+  NEW_INQUIRY: "New inquiry",
   NEW_LEADS: "New leads",
   AWAITING_RESPONSE: "Awaiting response",
   TOUR_SCHEDULED: "Tour scheduled",

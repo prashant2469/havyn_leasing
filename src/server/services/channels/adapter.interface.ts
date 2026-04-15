@@ -15,6 +15,8 @@ export type AdapterResult<T = void> =
 
 export interface PublishListingInput {
   organizationId: string;
+  /** Org URL slug — used for public microsite links on WEBSITE channel. */
+  organizationSlug?: string;
   listingChannelId: string;
   listingId: string;
   channelType: ListingChannelType;
@@ -27,6 +29,7 @@ export interface PublishListingInput {
     availableFrom?: Date | null;
     petPolicy?: string | null;
     amenities: unknown;
+    publicSlug?: string | null;
   };
   metadata: Record<string, unknown>;
   requestedByUserId?: string;

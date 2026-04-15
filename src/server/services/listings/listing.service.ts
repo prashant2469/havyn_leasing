@@ -25,8 +25,14 @@ export async function listListings(ctx: OrgContext) {
     where: { organizationId: ctx.organizationId },
     orderBy: { updatedAt: "desc" },
     include: {
+      organization: { select: { slug: true, name: true } },
       unit: { include: { property: { select: { id: true, name: true } } } },
       channels: true,
+      photos: {
+        orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }],
+        take: 1,
+        select: { id: true, url: true, caption: true, sortOrder: true, isPrimary: true },
+      },
       _count: { select: { photos: true, leads: true } },
     },
   });
@@ -36,6 +42,7 @@ export async function getListingById(ctx: OrgContext, id: string) {
   return prisma.listing.findFirst({
     where: { id, organizationId: ctx.organizationId },
     include: {
+      organization: { select: { slug: true, name: true } },
       unit: { include: { property: true } },
       photos: { orderBy: { sortOrder: "asc" } },
       channels: { include: { syncs: { orderBy: { startedAt: "desc" }, take: 5 } } },
@@ -98,6 +105,17 @@ export async function updateListing(ctx: OrgContext, input: UpdateListingInput) 
 
   if (input.unitId) await assertUnitInOrg(ctx, input.unitId);
 
+  if (input.publicSlug !== undefined && input.publicSlug !== null) {
+    const clash = await prisma.listing.findFirst({
+      where: {
+        organizationId: ctx.organizationId,
+        publicSlug: input.publicSlug,
+        NOT: { id: input.id },
+      },
+    });
+    if (clash) throw new Error("That public slug is already used by another listing in your organization.");
+  }
+
   await prisma.listing.update({
     where: { id: input.id },
     data: {
@@ -111,6 +129,7 @@ export async function updateListing(ctx: OrgContext, input: UpdateListingInput) 
       ...(input.amenities !== undefined && { amenities: input.amenities }),
       ...(input.petPolicy !== undefined && { petPolicy: input.petPolicy || null }),
       ...(input.status !== undefined && { status: input.status }),
+      ...(input.publicSlug !== undefined && { publicSlug: input.publicSlug }),
     },
   });
 

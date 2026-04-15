@@ -1,0 +1,68 @@
+"use server";
+
+import { ListingChannelType } from "@prisma/client";
+
+import { ingestInquiry } from "@/server/services/channels/inquiry-ingest.service";
+import { getPublishedPublicListing } from "@/server/services/listings/public-listing.service";
+import { publicInquiryFormSchema } from "@/server/validation/public-inquiry";
+
+export type PublicInquiryActionState =
+  | { ok: true; message: string }
+  | { ok: false; message: string }
+  | null;
+
+export async function submitPublicInquiryAction(
+  _prev: PublicInquiryActionState,
+  formData: FormData,
+): Promise<PublicInquiryActionState> {
+  try {
+    const raw = {
+      orgSlug: formData.get("orgSlug"),
+      listingSlug: formData.get("listingSlug"),
+      firstName: formData.get("firstName"),
+      lastName: formData.get("lastName"),
+      email: formData.get("email") || "",
+      phone: formData.get("phone") || "",
+      message: formData.get("message"),
+      website: formData.get("website") || "",
+    };
+    const input = publicInquiryFormSchema.parse(raw);
+
+    if (input.website?.trim()) {
+      return { ok: true, message: "Thanks — we'll be in touch shortly." };
+    }
+
+    if (!input.email?.trim() && !input.phone?.trim()) {
+      return { ok: false, message: "Please provide an email or phone number so we can reach you." };
+    }
+
+    const listing = await getPublishedPublicListing(input.orgSlug, input.listingSlug);
+    if (!listing) {
+      return { ok: false, message: "This listing is not available." };
+    }
+
+    await ingestInquiry(
+      { organizationId: listing.organizationId, actorUserId: null },
+      {
+        channelType: ListingChannelType.WEBSITE,
+        listingId: listing.id,
+        contact: {
+          firstName: input.firstName,
+          lastName: input.lastName,
+          email: input.email?.trim() || null,
+          phone: input.phone?.trim() || null,
+        },
+        message: input.message,
+        sourceMetadata: { source: "public_microsite", path: `/r/${input.orgSlug}/${input.listingSlug}` },
+      },
+    );
+
+    return {
+      ok: true,
+      message: "Thanks — your message was sent. A leasing specialist will follow up soon.",
+    };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Something went wrong. Please try again.";
+    return { ok: false, message };
+  }
+}

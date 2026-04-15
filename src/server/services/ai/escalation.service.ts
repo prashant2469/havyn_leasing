@@ -43,10 +43,9 @@ export async function createEscalationFlag(
     },
   });
 
-  // Move lead to NEEDS_REVIEW inbox stage
   await prisma.lead.update({
     where: { id: input.leadId },
-    data: { inboxStage: "NEEDS_HUMAN_REVIEW" },
+    data: { inboxStage: "NEEDS_HUMAN_REVIEW", automationPaused: true },
   });
 
   await recordActivity({
@@ -128,11 +127,20 @@ export async function detectEscalationSignals(
   leadId: string,
   conversationId?: string,
 ): Promise<AIEscalationFlag[]> {
+  const openCount = await prisma.aIEscalationFlag.count({
+    where: {
+      leadId,
+      organizationId: ctx.organizationId,
+      status: { in: ["OPEN", "ACKNOWLEDGED"] },
+    },
+  });
+  if (openCount > 0) return [];
+
   const messages = conversationId
     ? await prisma.message.findMany({
         where: { conversationId },
         orderBy: { sentAt: "desc" },
-        take: 5,
+        take: 8,
       })
     : [];
 
@@ -141,16 +149,38 @@ export async function detectEscalationSignals(
   for (const msg of messages) {
     const body = msg.body.toLowerCase();
     let reason: AIEscalationReason | null = null;
+    let confidence = 0.65;
+    let notes = `Auto-detected from inbound message: "${msg.body.slice(0, 160)}${msg.body.length > 160 ? "…" : ""}"`;
 
     if (
       body.includes("frustrated") ||
       body.includes("unacceptable") ||
       body.includes("terrible") ||
-      body.includes("angry")
+      body.includes("angry") ||
+      body.includes("lawsuit") ||
+      body.includes("lawyer")
     ) {
       reason = "UPSET_LEAD";
+      confidence = 0.78;
     } else if (body.includes("urgent") && body.includes("legal")) {
       reason = "URGENT_RESPONSE_NEEDED";
+      confidence = 0.72;
+    } else if (
+      body.includes("exception") ||
+      body.includes("discount") ||
+      body.includes("match their rent") ||
+      body.includes("price match") ||
+      body.includes("waive") ||
+      body.includes("make an exception")
+    ) {
+      reason = "POLICY_EXCEPTION";
+      confidence = 0.68;
+    } else if (body.includes("section 8") && (body.includes("refuse") || body.includes("won't") || body.includes("illegal"))) {
+      reason = "POLICY_EXCEPTION";
+      confidence = 0.7;
+    } else if (body.length < 12 && body.split(/\s+/).length <= 3) {
+      reason = "UNCLEAR_INTENT";
+      confidence = 0.45;
     }
 
     if (reason) {
@@ -158,11 +188,11 @@ export async function detectEscalationSignals(
         leadId,
         conversationId,
         reason,
-        notes: `Auto-detected from message content: "${msg.body.slice(0, 100)}"`,
-        confidenceScore: 0.7,
+        notes,
+        confidenceScore: confidence,
       });
       flags.push(flag);
-      break; // one flag per analysis run
+      break;
     }
   }
 

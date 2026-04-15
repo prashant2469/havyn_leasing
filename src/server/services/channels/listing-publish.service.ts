@@ -24,7 +24,13 @@ async function getChannel(organizationId: string, listingChannelId: string) {
       id: listingChannelId,
       listing: { organizationId },
     },
-    include: { listing: true },
+    include: {
+      listing: {
+        include: {
+          organization: { select: { slug: true } },
+        },
+      },
+    },
   });
   if (!channel) throw new Error("Listing channel not found");
   return channel;
@@ -146,6 +152,7 @@ export async function publishListingToChannel(
 
   const input: PublishListingInput = {
     organizationId: ctx.organizationId,
+    organizationSlug: channel.listing.organization.slug,
     listingChannelId: channel.id,
     listingId: channel.listingId,
     channelType: channel.channelType,
@@ -158,6 +165,7 @@ export async function publishListingToChannel(
       availableFrom: channel.listing.availableFrom,
       petPolicy: channel.listing.petPolicy,
       amenities: channel.listing.amenities,
+      publicSlug: channel.listing.publicSlug,
     },
     metadata: channel.metadata as Record<string, unknown>,
     requestedByUserId: ctx.userId,

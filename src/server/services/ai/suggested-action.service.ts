@@ -1,16 +1,17 @@
 /**
  * Suggested Action Service (V3)
  *
- * Generates, manages, and resolves AI-suggested next actions for leads.
- * Replace `_generateSuggestedActions` with real LLM reasoning when ready.
+ * Generates AI-suggested next actions for leads from pipeline state + V4 completeness.
  */
 
 import { AISuggestedAction, AISuggestedActionType } from "@prisma/client";
 
 import { ActivityVerbs } from "@/domains/activity/verbs";
-import { recordActivity } from "@/server/services/activity/activity.service";
-import { prisma } from "@/server/db/client";
 import type { OrgContext } from "@/server/auth/context";
+import { prisma } from "@/server/db/client";
+import { recordActivity } from "@/server/services/activity/activity.service";
+import { qualificationGapLabelsForLead } from "@/server/services/ai/copilot-qual-gaps";
+import { getQualificationCompleteness } from "@/server/services/leasing/qualification-score.service";
 
 interface ActionSuggestion {
   actionType: AISuggestedActionType;
@@ -19,10 +20,6 @@ interface ActionSuggestion {
   priority: number;
 }
 
-/**
- * Deterministic placeholder — derives suggested actions from lead + conversation state.
- * Replace with LLM reasoning chain when ready.
- */
 async function _generateSuggestedActions(leadId: string): Promise<ActionSuggestion[]> {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
@@ -45,59 +42,70 @@ async function _generateSuggestedActions(leadId: string): Promise<ActionSuggesti
   const latestConversation = lead.conversations[0];
   const latestMessage = latestConversation?.messages[0];
   const hasTour = lead.tours.length > 0;
-  const qualCount = lead.qualifications.length;
   const hasResponse = lead.firstResponseAt !== null;
+  const { score, missing } = await getQualificationCompleteness(leadId);
+  const gapLabels = await qualificationGapLabelsForLead(leadId);
+  const gapEvidence =
+    gapLabels.length > 0 ? `Evidence: still missing — ${gapLabels.slice(0, 4).join("; ")}.` : "Evidence: V4 qualification set is complete.";
 
-  // No first response yet → top priority: reply
   if (!hasResponse && latestMessage) {
     actions.push({
       actionType: "REPLY_NOW",
       title: "Send first reply",
-      description: "Lead has not received a response yet. Respond quickly to improve conversion.",
+      description:
+        "Lead has not received an outbound response yet. Quick first touch improves conversion. " +
+        (latestMessage.direction === "INBOUND"
+          ? "Latest message is inbound — acknowledge and ask one focused question."
+          : ""),
       priority: 100,
     });
   }
 
-  // Missing key qualification data
-  if (qualCount < 3) {
+  if (score < 0.85 && missing.length > 0) {
     actions.push({
       actionType: "ASK_QUALIFICATION",
-      title: "Capture missing qualification fields",
-      description: `Only ${qualCount} qualification fields recorded. Ask about move-in date, budget, and occupants.`,
-      priority: 80,
+      title: "Capture remaining qualification topics",
+      description: `Completeness about ${Math.round(score * 100)}%. ${gapEvidence}`,
+      priority: 80 + Math.round((1 - score) * 40),
     });
   }
 
-  // Qualified but no tour yet
-  if (qualCount >= 3 && !hasTour) {
+  if (score >= 0.5 && !hasTour) {
     actions.push({
       actionType: "OFFER_TOUR_TIMES",
-      title: "Offer tour availability",
-      description: "Lead appears qualified. Offer tour times to move them forward in the pipeline.",
+      title: "Offer concrete tour windows",
+      description:
+        "Lead has enough context to tour. Propose 2–3 slots aligned with the property showing schedule and confirm contact channel.",
       priority: 90,
     });
   }
 
-  // Tour scheduled — suggest application
   if (hasTour) {
     const tourDate = lead.tours[0].scheduledAt;
     const isPast = tourDate < new Date();
     if (isPast) {
       actions.push({
         actionType: "SEND_APPLICATION_INVITE",
-        title: "Send application invite",
-        description: "Tour was completed. Follow up with a rental application invitation.",
+        title: "Invite rental application",
+        description:
+          "Tour date has passed. Evidence: follow up while interest is fresh — share application link and required documents list.",
         priority: 95,
+      });
+    } else {
+      actions.push({
+        actionType: "MARK_QUALIFIED",
+        title: "Prep for upcoming tour",
+        description: `Tour on ${tourDate.toLocaleDateString()}. Confirm parking, access, and who meets the prospect.`,
+        priority: 70,
       });
     }
   }
 
-  // Default fallback
   if (actions.length === 0) {
     actions.push({
       actionType: "FOLLOW_UP_24H",
       title: "Schedule a 24-hour follow-up",
-      description: "No urgent action identified. Follow up tomorrow to keep the lead warm.",
+      description: "No urgent action identified. Evidence: keep thread warm with a short check-in.",
       priority: 20,
     });
   }
@@ -116,7 +124,6 @@ export async function generateSuggestedActions(
   });
   if (!lead) throw new Error("Lead not found");
 
-  // Expire existing pending actions
   await prisma.aISuggestedAction.updateMany({
     where: { leadId, status: "PENDING" },
     data: { status: "EXPIRED" },
@@ -136,7 +143,7 @@ export async function generateSuggestedActions(
           description: s.description,
           priority: s.priority,
           status: "PENDING",
-          modelId: "placeholder-v1",
+          modelId: "heuristic-v4",
         },
       }),
     ),

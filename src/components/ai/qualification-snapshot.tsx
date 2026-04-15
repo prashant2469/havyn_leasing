@@ -5,17 +5,19 @@ import { Bot, CheckCircle2, User } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { QUALIFICATION_KEYS, type QualificationKey } from "@/domains/leasing/qualification-keys";
 import { cn } from "@/lib/utils";
 
-const QUAL_DISPLAY_KEYS = [
-  { key: "desiredMoveIn", label: "Move-in" },
-  { key: "bedrooms", label: "Bedrooms" },
-  { key: "monthlyBudget", label: "Budget" },
-  { key: "occupants", label: "Occupants" },
-  { key: "hasPets", label: "Pets" },
-  { key: "hasVoucher", label: "Voucher" },
-  { key: "timeline", label: "Timeline" },
-];
+const QUAL_LABEL: Record<QualificationKey, string> = {
+  moveInDate: "Move-in",
+  bedrooms: "Bedrooms",
+  pets: "Pets",
+  monthlyBudget: "Budget",
+  occupants: "Occupants",
+  propertyInterest: "Property / area",
+};
+
+const QUAL_DISPLAY_KEYS = QUALIFICATION_KEYS.map((key) => ({ key, label: QUAL_LABEL[key] }));
 
 interface QualificationSnapshotProps {
   qualifications: QualificationAnswer[];

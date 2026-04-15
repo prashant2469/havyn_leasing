@@ -23,8 +23,15 @@ export const createListingSchema = z.object({
 
 export type CreateListingInput = z.infer<typeof createListingSchema>;
 
+const optionalPublicSlug = z.preprocess((v) => {
+  if (v === undefined) return undefined;
+  if (v === "" || v === null) return null;
+  return String(v).trim().toLowerCase();
+}, z.union([z.null(), z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(120)]).optional());
+
 export const updateListingSchema = createListingSchema.partial().extend({
   id: z.string().cuid(),
+  publicSlug: optionalPublicSlug,
 });
 
 export type UpdateListingInput = z.infer<typeof updateListingSchema>;

@@ -38,11 +38,16 @@ model Organization {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts Account[]
+  sessions Session[]
 
   memberships              Membership[]
   leadsAssigned            Lead[]                @relation("LeadAssignee")
@@ -79,6 +84,45 @@ model Membership {
   @@index([organizationId])
 }
 
+// Auth.js — OAuth accounts and optional DB sessions
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
 // --- Properties & units ---
 
 enum PropertyStatus {
@@ -96,6 +140,8 @@ model Property {
   postalCode     String
   country        String         @default("US")
   status         PropertyStatus @default(ACTIVE)
+  /// V4: JSON schedule — { "weekdayWindows": [{ "weekdays": [1,2,3,4,5], "start": "09:00", "end": "18:00" }], "tourDurationMinutes": 30, "blackouts": [{ "start": "ISO", "end": "ISO" }] }
+  showingSchedule Json           @default("{}")
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
@@ -147,6 +193,8 @@ model Listing {
   id             String        @id @default(cuid())
   organizationId String
   unitId         String
+  /// URL segment for public prospect page: /r/{orgSlug}/{publicSlug}
+  publicSlug     String?
   title          String
   description    String?       @db.Text
   monthlyRent    Decimal       @db.Decimal(12, 2)
@@ -170,6 +218,7 @@ model Listing {
   tours         Tour[]
   conversations Conversation[]
 
+  @@unique([organizationId, publicSlug])
   @@index([organizationId, status])
   @@index([unitId])
 }
@@ -289,6 +338,8 @@ model ListingChannelSync {
 // --- Leasing: leads, inbox, qualification ---
 
 enum LeadInboxStage {
+  /// First touch from owned website / inbound — automation eligible
+  NEW_INQUIRY
   NEW_LEADS
   AWAITING_RESPONSE
   TOUR_SCHEDULED
@@ -338,11 +389,13 @@ model Lead {
   applicationStartedAt DateTime?
   convertedAt          DateTime?
   status               LeadStatus            @default(NEW)
-  inboxStage           LeadInboxStage        @default(NEW_LEADS)
+  inboxStage           LeadInboxStage        @default(NEW_INQUIRY)
   assignedToUserId     String?
   nextActionAt         DateTime?
   nextActionType       NextActionType?
   notes                String?
+  /// V4: when true, outbound automation (email/SMS) is paused — escalation or manual
+  automationPaused     Boolean               @default(false)
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
 

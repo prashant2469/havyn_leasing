@@ -73,6 +73,10 @@ async function main() {
     data: { name: "Havyn Demo PM", slug: "havyn-demo" },
   });
 
+  const orgB = await prisma.organization.create({
+    data: { name: "Sunrise Residential", slug: "sunrise-demo" },
+  });
+
   const admin = await prisma.user.create({
     data: { email: "admin@havyn.local", name: "Alex Admin" },
   });
@@ -81,10 +85,16 @@ async function main() {
     data: { email: "manager@havyn.local", name: "Morgan Manager" },
   });
 
+  const dualOrgUser = await prisma.user.create({
+    data: { email: "dual@havyn.local", name: "Dana Dual-Org" },
+  });
+
   await prisma.membership.createMany({
     data: [
       { userId: admin.id, organizationId: org.id, role: MembershipRole.OWNER },
       { userId: manager.id, organizationId: org.id, role: MembershipRole.MANAGER },
+      { userId: dualOrgUser.id, organizationId: org.id, role: MembershipRole.STAFF },
+      { userId: dualOrgUser.id, organizationId: orgB.id, role: MembershipRole.ADMIN },
     ],
   });
 
@@ -96,6 +106,10 @@ async function main() {
       city: "Austin",
       state: "TX",
       postalCode: "78701",
+      showingSchedule: {
+        weekdayWindows: [{ weekdays: [1, 2, 3, 4, 5], start: "10:00", end: "16:00" }],
+        tourDurationMinutes: 30,
+      },
     },
   });
 
@@ -121,18 +135,147 @@ async function main() {
     },
   });
 
+  const unit103 = await prisma.unit.create({
+    data: {
+      propertyId: property.id,
+      unitNumber: "103",
+      beds: 2,
+      baths: 1,
+      sqft: 880,
+      status: UnitStatus.NOTICE,
+    },
+  });
+
+  const propertyLake = await prisma.property.create({
+    data: {
+      organizationId: org.id,
+      name: "Lakeside Lofts",
+      street: "400 Lakeview Blvd",
+      city: "Austin",
+      state: "TX",
+      postalCode: "78704",
+      showingSchedule: {
+        weekdayWindows: [{ weekdays: [1, 2, 3, 4, 5, 6], start: "09:00", end: "17:00" }],
+        tourDurationMinutes: 30,
+      },
+    },
+  });
+
+  const unitLake201 = await prisma.unit.create({
+    data: {
+      propertyId: propertyLake.id,
+      unitNumber: "201",
+      beds: 1,
+      baths: 1,
+      sqft: 640,
+      status: UnitStatus.VACANT,
+    },
+  });
+
+  const propertyB = await prisma.property.create({
+    data: {
+      organizationId: orgB.id,
+      name: "Sunrise Court",
+      street: "55 Sunrise Ave",
+      city: "Dallas",
+      state: "TX",
+      postalCode: "75201",
+      showingSchedule: {
+        weekdayWindows: [{ weekdays: [1, 2, 3, 4, 5], start: "11:00", end: "15:00" }],
+        tourDurationMinutes: 45,
+      },
+    },
+  });
+
+  const unitSunrise1 = await prisma.unit.create({
+    data: {
+      propertyId: propertyB.id,
+      unitNumber: "A1",
+      beds: 2,
+      baths: 2,
+      sqft: 1010,
+      status: UnitStatus.VACANT,
+    },
+  });
+
   const listing = await prisma.listing.create({
     data: {
       organizationId: org.id,
       unitId: unit101.id,
+      publicSlug: "foundry-101",
       title: "Bright 2BR · The Foundry 101",
-      description: "Corner unit, W/D in unit, pet-friendly with deposit.",
+      description:
+        "Corner unit with floor-to-ceiling windows, W/D in unit, quartz counters, and a walkable score to downtown. Pet-friendly with deposit.",
       monthlyRent: 2400,
       availableFrom: new Date(),
       bedrooms: 2,
       bathrooms: 2,
-      amenities: ["wd_in_unit", "parking", "gym"],
+      amenities: ["wd_in_unit", "parking", "gym", "hardwood_floors", "balcony"],
       petPolicy: "Cats and dogs under 40 lbs; $300 deposit.",
+      status: ListingStatus.ACTIVE,
+    },
+  });
+
+  await prisma.listingPhoto.createMany({
+    data: [
+      {
+        listingId: listing.id,
+        storageKey: "seed/foundry-primary",
+        url: "https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=1400&auto=format&fit=crop&q=80",
+        sortOrder: 0,
+        isPrimary: true,
+        caption: "Living area",
+      },
+      {
+        listingId: listing.id,
+        storageKey: "seed/foundry-2",
+        url: "https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=1400&auto=format&fit=crop&q=80",
+        sortOrder: 1,
+        isPrimary: false,
+      },
+    ],
+  });
+
+  const listingLake = await prisma.listing.create({
+    data: {
+      organizationId: org.id,
+      unitId: unitLake201.id,
+      publicSlug: "lakeside-studio-201",
+      title: "Studio loft · Lakeside 201",
+      description: "Top floor studio, bike storage, steps from the trail.",
+      monthlyRent: 1650,
+      availableFrom: new Date(),
+      bedrooms: 1,
+      bathrooms: 1,
+      amenities: ["bike_storage", "roof_deck"],
+      status: ListingStatus.ACTIVE,
+    },
+  });
+
+  await prisma.listingPhoto.createMany({
+    data: [
+      {
+        listingId: listingLake.id,
+        storageKey: "seed/lake-primary",
+        url: "https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=1400&auto=format&fit=crop&q=80",
+        sortOrder: 0,
+        isPrimary: true,
+      },
+    ],
+  });
+
+  const listingSunrise = await prisma.listing.create({
+    data: {
+      organizationId: orgB.id,
+      unitId: unitSunrise1.id,
+      publicSlug: "sunrise-a1",
+      title: "2BR corner · Sunrise Court A1",
+      description: "Pool view, in-unit laundry, reserved parking.",
+      monthlyRent: 2100,
+      availableFrom: new Date(),
+      bedrooms: 2,
+      bathrooms: 2,
+      amenities: ["pool", "wd_in_unit", "parking"],
       status: ListingStatus.ACTIVE,
     },
   });
@@ -147,7 +290,7 @@ async function main() {
       replyModeDefault: ConversationReplyMode.IN_CHANNEL_REPLY,
       lastPublishedAt: new Date(),
       lastSyncedAt: new Date(),
-      metadata: { url: `/listings/${listing.id}` },
+      metadata: { url: `/r/havyn-demo/foundry-101` },
     },
   });
 
@@ -185,6 +328,85 @@ async function main() {
       publishState: ChannelPublishState.DRAFT,
       replyModeDefault: ConversationReplyMode.MANUAL_ONLY,
     },
+  });
+
+  const lakeWebsite = await prisma.listingChannel.create({
+    data: {
+      listingId: listingLake.id,
+      channelType: ListingChannelType.WEBSITE,
+      publishStatus: ChannelPublishStatus.LIVE,
+      publishState: ChannelPublishState.PUBLISHED,
+      externalListingId: `web-${listingLake.id}`,
+      replyModeDefault: ConversationReplyMode.IN_CHANNEL_REPLY,
+      lastPublishedAt: new Date(),
+      lastSyncedAt: new Date(),
+      metadata: { url: `/r/havyn-demo/lakeside-studio-201` },
+    },
+  });
+
+  await prisma.listingChannel.create({
+    data: {
+      listingId: listingLake.id,
+      channelType: ListingChannelType.MANUAL,
+      publishStatus: ChannelPublishStatus.LIVE,
+      publishState: ChannelPublishState.PUBLISHED,
+      externalListingId: `manual-${listingLake.id}`,
+      replyModeDefault: ConversationReplyMode.MANUAL_ONLY,
+      lastPublishedAt: new Date(),
+      lastSyncedAt: new Date(),
+      metadata: {},
+    },
+  });
+
+  const sunriseWebsite = await prisma.listingChannel.create({
+    data: {
+      listingId: listingSunrise.id,
+      channelType: ListingChannelType.WEBSITE,
+      publishStatus: ChannelPublishStatus.LIVE,
+      publishState: ChannelPublishState.PUBLISHED,
+      externalListingId: `web-${listingSunrise.id}`,
+      replyModeDefault: ConversationReplyMode.IN_CHANNEL_REPLY,
+      lastPublishedAt: new Date(),
+      lastSyncedAt: new Date(),
+      metadata: { url: `/r/sunrise-demo/sunrise-a1` },
+    },
+  });
+
+  await prisma.listingChannel.create({
+    data: {
+      listingId: listingSunrise.id,
+      channelType: ListingChannelType.MANUAL,
+      publishStatus: ChannelPublishStatus.LIVE,
+      publishState: ChannelPublishState.PUBLISHED,
+      externalListingId: `manual-${listingSunrise.id}`,
+      replyModeDefault: ConversationReplyMode.MANUAL_ONLY,
+      lastPublishedAt: new Date(),
+      lastSyncedAt: new Date(),
+      metadata: {},
+    },
+  });
+
+  await prisma.listingChannelSync.createMany({
+    data: [
+      {
+        listingChannelId: lakeWebsite.id,
+        operation: ChannelSyncOperation.PUBLISH,
+        status: ChannelSyncStatus.SUCCEEDED,
+        startedAt: new Date(Date.now() - 8000),
+        completedAt: new Date(),
+        requestPayload: { listingId: listingLake.id },
+        resultPayload: { externalListingId: `web-${listingLake.id}` },
+      },
+      {
+        listingChannelId: sunriseWebsite.id,
+        operation: ChannelSyncOperation.PUBLISH,
+        status: ChannelSyncStatus.SUCCEEDED,
+        startedAt: new Date(Date.now() - 9000),
+        completedAt: new Date(),
+        requestPayload: { listingId: listingSunrise.id },
+        resultPayload: { externalListingId: `web-${listingSunrise.id}` },
+      },
+    ],
   });
 
   await prisma.resident.create({
@@ -255,6 +477,52 @@ async function main() {
     },
   });
 
+  const leadOwnedWebsite = await prisma.lead.create({
+    data: {
+      organizationId: org.id,
+      propertyId: property.id,
+      primaryUnitId: unit101.id,
+      listingId: listing.id,
+      firstName: "Dana",
+      lastName: "OwnedChannel",
+      email: "dana.owned@example.com",
+      source: "Website",
+      sourceChannelType: ListingChannelType.WEBSITE,
+      sourceAttribution: {
+        channelType: "WEBSITE",
+        source: "public_microsite",
+        path: "/r/havyn-demo/foundry-101",
+        ingestedAt: new Date().toISOString(),
+      },
+      inboxStage: LeadInboxStage.NEW_INQUIRY,
+      status: LeadStatus.NEW,
+      firstResponseAt: new Date(),
+    },
+  });
+
+  const convoOwnedWebsite = await prisma.conversation.create({
+    data: {
+      organizationId: org.id,
+      leadId: leadOwnedWebsite.id,
+      listingId: listing.id,
+      subject: "Dana OwnedChannel",
+      channelType: ListingChannelType.WEBSITE,
+      replyMode: ConversationReplyMode.IN_CHANNEL_REPLY,
+      sourceMetadata: { source: "public_microsite" },
+    },
+  });
+
+  await prisma.message.create({
+    data: {
+      conversationId: convoOwnedWebsite.id,
+      direction: MessageDirection.INBOUND,
+      channel: MessageChannel.IN_APP,
+      body: "Hi! I'd like to learn more about this listing.",
+      authorType: MessageAuthorType.CONTACT,
+      isAiGenerated: false,
+    },
+  });
+
   const leadTour = await prisma.lead.create({
     data: {
       organizationId: org.id,
@@ -308,6 +576,7 @@ async function main() {
       status: LeadStatus.CONTACTED,
       inboxStage: LeadInboxStage.NEEDS_HUMAN_REVIEW,
       assignedToUserId: manager.id,
+      automationPaused: true,
     },
   });
 
@@ -374,6 +643,25 @@ async function main() {
         isAiGenerated: false,
         channelMetadata: { sourceChannelType: "ZILLOW", externalLeadId: "zillow-lead-001" },
       },
+      {
+        conversationId: convoNew.id,
+        direction: MessageDirection.OUTBOUND,
+        channel: MessageChannel.OTHER,
+        body: "Hi Sam — yes, June 1 works. Would you like a virtual or in-person tour?",
+        authorType: MessageAuthorType.USER,
+        authorUserId: manager.id,
+        isAiGenerated: false,
+        channelMetadata: { sourceChannelType: "ZILLOW" },
+      },
+      {
+        conversationId: convoNew.id,
+        direction: MessageDirection.INBOUND,
+        channel: MessageChannel.OTHER,
+        body: "In-person if possible — weekday afternoons.",
+        authorType: MessageAuthorType.CONTACT,
+        isAiGenerated: false,
+        channelMetadata: { sourceChannelType: "ZILLOW" },
+      },
     ],
   });
 
@@ -423,12 +711,94 @@ async function main() {
     },
   });
 
+  const leadSunrise = await prisma.lead.create({
+    data: {
+      organizationId: orgB.id,
+      propertyId: propertyB.id,
+      primaryUnitId: unitSunrise1.id,
+      listingId: listingSunrise.id,
+      firstName: "Priya",
+      lastName: "Shah",
+      email: "priya@example.com",
+      phone: "+14655550111",
+      source: "Website",
+      sourceChannelType: ListingChannelType.WEBSITE,
+      status: LeadStatus.NEW,
+      inboxStage: LeadInboxStage.NEW_LEADS,
+      assignedToUserId: dualOrgUser.id,
+    },
+  });
+
+  const convoSunrise = await prisma.conversation.create({
+    data: {
+      organizationId: orgB.id,
+      leadId: leadSunrise.id,
+      listingId: listingSunrise.id,
+      subject: `${leadSunrise.firstName} ${leadSunrise.lastName}`,
+      channelType: ListingChannelType.WEBSITE,
+      replyMode: ConversationReplyMode.IN_CHANNEL_REPLY,
+    },
+  });
+
+  await prisma.message.createMany({
+    data: [
+      {
+        conversationId: convoSunrise.id,
+        direction: MessageDirection.INBOUND,
+        channel: MessageChannel.IN_APP,
+        body: "Is the pool heated year-round?",
+        authorType: MessageAuthorType.CONTACT,
+        isAiGenerated: false,
+      },
+      {
+        conversationId: convoSunrise.id,
+        direction: MessageDirection.OUTBOUND,
+        channel: MessageChannel.IN_APP,
+        body: "Hi Priya — yes, the pool is heated October through April.",
+        authorType: MessageAuthorType.USER,
+        authorUserId: dualOrgUser.id,
+        isAiGenerated: false,
+      },
+    ],
+  });
+
+  const leadLake = await prisma.lead.create({
+    data: {
+      organizationId: org.id,
+      propertyId: propertyLake.id,
+      primaryUnitId: unitLake201.id,
+      listingId: listingLake.id,
+      firstName: "Chris",
+      lastName: "Okonkwo",
+      email: "chris@example.com",
+      source: "Website",
+      sourceChannelType: ListingChannelType.WEBSITE,
+      status: LeadStatus.CONTACTED,
+      inboxStage: LeadInboxStage.AWAITING_RESPONSE,
+      assignedToUserId: manager.id,
+    },
+  });
+
+  await prisma.tour.create({
+    data: {
+      leadId: leadLake.id,
+      listingId: listingLake.id,
+      scheduledAt: new Date(Date.now() + 86400000 * 3),
+      status: TourStatus.SCHEDULED,
+      notes: "Evening after 5:30pm",
+    },
+  });
+
   writeDevEnvLocal(org.id, manager.id);
 
   console.log("\n--- Havyn seed complete ---");
   console.log(`DEV_ORGANIZATION_ID="${org.id}"`);
   console.log(`DEV_USER_ID="${manager.id}"`);
-  console.log("(Also written to .env.local. Use admin user id for OWNER-only checks if you add them later.)\n");
+  console.log("(Also written to .env.local. Restart dev server after seed.)");
+  console.log("\nGoogle sign-in: your Google account email must match a User.email in the DB (case-insensitive).");
+  console.log("Seed users: admin@havyn.local, manager@havyn.local, dual@havyn.local — update emails in DB or re-seed with your address.");
+  console.log("Multi-org test user: dual@havyn.local (Havyn Demo PM + Sunrise Residential).");
+  console.log("Public microsite examples: /r/havyn-demo/foundry-101 , /r/havyn-demo/lakeside-studio-201 , /r/sunrise-demo/sunrise-a1\n");
 }
 
 main()

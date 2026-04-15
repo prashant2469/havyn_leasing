@@ -78,6 +78,7 @@ export async function updateListingAction(_prev: unknown, formData: FormData) {
       amenities,
       petPolicy: formData.get("petPolicy") || undefined,
       status: formData.get("status") || undefined,
+      publicSlug: formData.has("publicSlug") ? formData.get("publicSlug") : undefined,
     };
     const input = updateListingSchema.parse({
       ...raw,

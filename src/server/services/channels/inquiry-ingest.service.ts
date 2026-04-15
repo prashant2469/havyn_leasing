@@ -1,5 +1,6 @@
 import {
   ConversationReplyMode,
+  LeadInboxStage,
   MessageAuthorType,
   MessageChannel,
   MessageDirection,
@@ -8,9 +9,10 @@ import {
 
 import { defaultReplyModeForChannel } from "@/domains/channels/constants";
 import { ActivityVerbs } from "@/domains/activity/verbs";
-import type { OrgContext } from "@/server/auth/context";
+import type { ActivitySourceContext } from "@/server/services/activity/activity.service";
 import { prisma } from "@/server/db/client";
 import { logActivity } from "@/server/services/activity/activity.service";
+import { enqueueLeadIngested, enqueueMessageReceived } from "@/server/jobs/events";
 
 export interface IngestInquiryParams {
   channelType: import("@prisma/client").ListingChannelType;
@@ -41,7 +43,7 @@ export interface IngestInquiryResult {
  * normalising their payload.
  */
 export async function ingestInquiry(
-  ctx: OrgContext,
+  ctx: ActivitySourceContext,
   params: IngestInquiryParams,
 ): Promise<IngestInquiryResult> {
   const replyMode =
@@ -79,6 +81,7 @@ export async function ingestInquiry(
         lastName: params.contact.lastName,
         email: params.contact.email ?? null,
         phone: params.contact.phone ?? null,
+        inboxStage: LeadInboxStage.NEW_INQUIRY,
         source: params.channelType,
         sourceChannelType: params.channelType,
         sourceChannelRefId: params.externalLeadId ?? null,
@@ -199,6 +202,22 @@ export async function ingestInquiry(
     entityId: message.id,
     metadata: { leadId: lead.id, channel: params.channelType },
   });
+
+  try {
+    const payload = {
+      organizationId: ctx.organizationId,
+      leadId: lead.id,
+      conversationId: conversation.id,
+      messageId: message.id,
+    };
+    if (isNewLead) {
+      await enqueueLeadIngested(payload);
+    } else {
+      await enqueueMessageReceived(payload);
+    }
+  } catch (err) {
+    console.error("[ingestInquiry] automation enqueue failed:", err);
+  }
 
   return {
     leadId: lead.id,

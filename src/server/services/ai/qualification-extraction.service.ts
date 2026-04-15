@@ -32,7 +32,7 @@ function _extractQualificationFields(messages: { body: string }[]): ExtractedFie
     /(?:move[- ]?in|available|start).*?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}|\d{1,2}\/\d{1,2}\/\d{2,4}/i,
   );
   if (moveInMatch) {
-    extracted.push({ key: "desiredMoveIn", value: moveInMatch[0], label: "Desired move-in" });
+    extracted.push({ key: "moveInDate", value: moveInMatch[0], label: "Desired move-in" });
   }
 
   // Bedroom signals
@@ -53,9 +53,9 @@ function _extractQualificationFields(messages: { body: string }[]): ExtractedFie
 
   // Pet signals
   if (/\b(have a|have|with|my)\s+(cat|dog|pet|kitten|puppy)/i.test(fullText)) {
-    extracted.push({ key: "hasPets", value: "true", label: "Has pets" });
+    extracted.push({ key: "pets", value: "yes", label: "Pets" });
   } else if (/no pets|don't have a pet/i.test(fullText)) {
-    extracted.push({ key: "hasPets", value: "false", label: "Has pets" });
+    extracted.push({ key: "pets", value: "no", label: "Pets" });
   }
 
   // Occupant count

@@ -44,6 +44,38 @@ export async function listMessagesForLead(ctx: OrgContext, leadId: string) {
   return convo;
 }
 
+export async function logOutboundAutomationMessage(
+  ctx: OrgContext,
+  input: {
+    conversationId: string;
+    leadId: string;
+    body: string;
+    channel: import("@prisma/client").MessageChannel;
+  },
+) {
+  const message = await prisma.message.create({
+    data: {
+      conversationId: input.conversationId,
+      direction: MessageDirection.OUTBOUND,
+      channel: input.channel,
+      body: input.body,
+      authorType: MessageAuthorType.USER,
+      authorUserId: ctx.userId,
+      isAiGenerated: true,
+    },
+  });
+
+  await recordActivity({
+    ctx,
+    verb: ActivityVerbs.MESSAGE_SENT,
+    entityType: "Message",
+    entityId: message.id,
+    metadata: { leadId: input.leadId, channel: input.channel, automation: true },
+  });
+
+  return message;
+}
+
 export async function logOutboundMessage(ctx: OrgContext, input: LogOutboundMessageInput) {
   const convo = await getOrCreateLeadConversation(ctx, input.leadId);
 

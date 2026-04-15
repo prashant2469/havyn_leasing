@@ -14,7 +14,7 @@ export async function createApplication(ctx: OrgContext, input: CreateApplicatio
   const application = await prisma.application.create({
     data: {
       leadId: input.leadId,
-      payload: (input.payload ?? {}) as Prisma.InputJsonValue,
+      payload: JSON.parse(JSON.stringify(input.payload ?? {})) as Prisma.InputJsonValue,
     },
   });
 

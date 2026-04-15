@@ -1,44 +1,55 @@
 /**
  * Reply Draft Service (V3)
  *
- * Generates AI-suggested reply drafts, manages approval/rejection lifecycle,
- * and creates the actual Message record when a draft is sent.
- * Swap `_generateDraftBody` with a real LLM call when ready.
+ * AI-suggested reply drafts with heuristic base + optional OpenAI enrichment.
  */
 
 import { AIReplyDraft, AIReplyDraftStatus, MessageChannel } from "@prisma/client";
 
 import { ActivityVerbs } from "@/domains/activity/verbs";
-import { recordActivity } from "@/server/services/activity/activity.service";
-import { prisma } from "@/server/db/client";
 import type { OrgContext } from "@/server/auth/context";
+import { prisma } from "@/server/db/client";
+import { recordActivity } from "@/server/services/activity/activity.service";
+import { qualificationGapLabelsForLead } from "@/server/services/ai/copilot-qual-gaps";
+import { tryLlmReplyDraft } from "@/server/services/ai/llm/copilot-llm";
+import { getQualificationCompleteness } from "@/server/services/leasing/qualification-score.service";
 
-/**
- * Placeholder draft generator.
- * Replace this body with a real LLM prompt against conversation history.
- */
-async function _generateDraftBody(conversationId: string): Promise<{
+async function _generateDraftBody(conversationId: string, leadId: string): Promise<{
   body: string;
   suggestedChannel: MessageChannel;
   contextNote: string;
+  modelNote: string;
 }> {
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
     include: {
-      messages: { orderBy: { sentAt: "asc" }, take: 10 },
-      lead: { select: { firstName: true, lastName: true } },
+      messages: { orderBy: { sentAt: "asc" }, take: 15 },
+      lead: {
+        select: {
+          firstName: true,
+          lastName: true,
+          listing: { select: { title: true } },
+        },
+      },
     },
   });
 
   if (!conversation) throw new Error(`Conversation ${conversationId} not found`);
 
   const firstName = conversation.lead?.firstName ?? "there";
+  const listingTitle = conversation.lead?.listing?.title;
   const messageCount = conversation.messages.length;
   const isFirstReply = messageCount <= 1;
+  const { score, missing } = await getQualificationCompleteness(leadId);
+  const gaps = await qualificationGapLabelsForLead(leadId);
+  const gapClause =
+    gaps.length > 0
+      ? `To help us match you${listingTitle ? ` with ${listingTitle}` : ""}, could you share: ${gaps.slice(0, 2).join(" · ")}?`
+      : "If anything about timing or budget has shifted, just let us know so we can keep options accurate.";
 
   const body = isFirstReply
-    ? `Hi ${firstName},\n\nThank you for reaching out! I'd love to help you find the perfect home.\n\nCould you share a bit more about what you're looking for — your desired move-in date, the number of bedrooms, and your budget range? That'll help me match you with the best available options.\n\nLooking forward to hearing from you!`
-    : `Hi ${firstName},\n\nThanks for your message. Based on what you've shared, I think we have some great options for you.\n\nWould you like to schedule a tour this week? I have availability on Tuesday and Thursday afternoons. Let me know what works for you!\n\nBest regards`;
+    ? `Hi ${firstName},\n\nThanks for reaching out${listingTitle ? ` about ${listingTitle}` : ""}. We're on it and will help you find the right fit.\n\n${gapClause}\n\nWe typically reply within one business day — watch your inbox.`
+    : `Hi ${firstName},\n\nThanks for the update. We're noting everything on our side.\n\n${gapClause}\n\nIf you'd like to see the home in person, say the word and we'll send a few tour times that match the calendar.`;
 
   const suggestedChannel: MessageChannel =
     conversation.channelType === "EMAIL"
@@ -48,10 +59,28 @@ async function _generateDraftBody(conversationId: string): Promise<{
         : "IN_APP";
 
   const contextNote = isFirstReply
-    ? "First-touch reply — requesting qualification details."
-    : "Follow-up reply — offering tour availability.";
+    ? `Heuristic draft (completeness ~${Math.round(score * 100)}%, ${missing.length} open fields).`
+    : "Heuristic follow-up — references qualification gaps when present.";
 
-  return { body, suggestedChannel, contextNote };
+  const transcript = conversation.messages.map((m) => `${m.direction}: ${m.body}`).join("\n");
+
+  const llm = await tryLlmReplyDraft({
+    transcript,
+    firstName,
+    listingTitle: listingTitle ?? undefined,
+    heuristicBody: body,
+  });
+
+  if (llm) {
+    return {
+      body: llm.body,
+      suggestedChannel,
+      contextNote: [contextNote, llm.contextNote].filter(Boolean).join(" "),
+      modelNote: "openai-json",
+    };
+  }
+
+  return { body, suggestedChannel, contextNote, modelNote: "heuristic-v4" };
 }
 
 export async function suggestReplyDraft(
@@ -65,13 +94,12 @@ export async function suggestReplyDraft(
   if (!conversation) throw new Error("Conversation not found");
   if (!conversation.leadId) throw new Error("Conversation has no lead");
 
-  // Supersede any pending drafts
   await prisma.aIReplyDraft.updateMany({
     where: { conversationId, status: "SUGGESTED" },
     data: { status: "SUPERSEDED" },
   });
 
-  const content = await _generateDraftBody(conversationId);
+  const content = await _generateDraftBody(conversationId, conversation.leadId);
 
   const draft = await prisma.aIReplyDraft.create({
     data: {
@@ -82,8 +110,8 @@ export async function suggestReplyDraft(
       suggestedChannel: content.suggestedChannel,
       contextNote: content.contextNote,
       status: "SUGGESTED",
-      modelId: "placeholder-v1",
-      promptVersion: "v3.0",
+      modelId: content.modelNote,
+      promptVersion: "v4.1",
     },
   });
 
@@ -177,7 +205,7 @@ export async function sendApprovedDraft(
       authorType: "AI",
       authorUserId: ctx.userId,
       isAiGenerated: true,
-      provider: draft.modelId ?? "placeholder",
+      provider: draft.modelId ?? "heuristic",
     },
   });
 

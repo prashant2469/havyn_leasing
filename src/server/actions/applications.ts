@@ -8,7 +8,11 @@ import {
   createApplication,
   updateApplicationStatus,
 } from "@/server/services/leasing/application.service";
-import { createApplicationSchema, updateApplicationStatusSchema } from "@/server/validation/application";
+import {
+  createApplicationSchema,
+  parseApplicationIntakeFromFormData,
+  updateApplicationStatusSchema,
+} from "@/server/validation/application";
 
 async function applicationLeadId(organizationId: string, applicationId: string) {
   const row = await prisma.application.findFirst({
@@ -24,8 +28,9 @@ export async function createApplicationAction(_prev: unknown, formData: FormData
     const ctx = await requireOrgContext();
     const raw = {
       leadId: formData.get("leadId"),
+      payload: parseApplicationIntakeFromFormData(formData),
     };
-    const input = createApplicationSchema.parse({ ...raw, payload: {} });
+    const input = createApplicationSchema.parse(raw);
     await createApplication(ctx, input);
     revalidatePath(`/leasing/leads/${input.leadId}`);
     revalidatePath("/leasing/leads");

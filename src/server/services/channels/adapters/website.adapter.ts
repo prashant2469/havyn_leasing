@@ -14,6 +14,15 @@ import type {
   UnpublishListingInput,
 } from "../adapter.interface";
 
+function prospectMicrositeUrl(input: PublishListingInput): string | undefined {
+  const slug = input.listing.publicSlug?.trim();
+  const orgSlug = input.organizationSlug?.trim();
+  if (!slug || !orgSlug) return undefined;
+  const base = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ?? "";
+  const path = `/r/${orgSlug}/${slug}`;
+  return base ? `${base}${path}` : path;
+}
+
 /**
  * Website adapter — simulates publishing to your own website/portal.
  * All operations succeed locally with no external API calls.
@@ -33,15 +42,15 @@ export class WebsiteAdapter implements ChannelAdapter {
   async publishListing(
     input: PublishListingInput,
   ): Promise<AdapterResult<PublishListingOutput>> {
-    // Local simulation: mark as published, set an internal "external" id
     const externalListingId = `web-${input.listingId}`;
+    const publicUrl = prospectMicrositeUrl(input);
     return {
       success: true,
       data: {
         publishState: ChannelPublishState.PUBLISHED,
         externalListingId,
         channelMetadata: {
-          url: `/listings/${input.listingId}`,
+          url: publicUrl ?? `/listings/${input.listingId}`,
           publishedAt: new Date().toISOString(),
         },
       },
@@ -51,12 +60,16 @@ export class WebsiteAdapter implements ChannelAdapter {
   async updateListing(
     input: PublishListingInput,
   ): Promise<AdapterResult<PublishListingOutput>> {
+    const publicUrl = prospectMicrositeUrl(input);
     return {
       success: true,
       data: {
         publishState: ChannelPublishState.PUBLISHED,
         externalListingId: `web-${input.listingId}`,
-        channelMetadata: { updatedAt: new Date().toISOString() },
+        channelMetadata: {
+          updatedAt: new Date().toISOString(),
+          url: publicUrl ?? `/listings/${input.listingId}`,
+        },
       },
     };
   }

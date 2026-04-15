@@ -40,6 +40,7 @@ type LeadBrief = {
   lastName: string;
   email: string | null;
   phone: string | null;
+  automationPaused: boolean;
   status: LeadStatus;
   nextActionAt: string | null;
   sourceChannelType: ListingChannelType | null;
@@ -151,7 +152,7 @@ function ChannelBadge({ channelType }: { channelType: ListingChannelType | null 
 
 export function LeasingInboxClient() {
   const qc = useQueryClient();
-  const [stage, setStage] = useState<LeadInboxStage>(LeadInboxStage.NEW_LEADS);
+  const [stage, setStage] = useState<LeadInboxStage>(LeadInboxStage.NEW_INQUIRY);
   const [channelFilter, setChannelFilter] = useState<ListingChannelType | "ALL">("ALL");
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
 
@@ -294,6 +295,11 @@ export function LeasingInboxClient() {
                           <span className="flex items-center justify-between gap-1">
                             <span className="block truncate">
                               {l.firstName} {l.lastName}
+                              {l.automationPaused ? (
+                                <span className="text-destructive ml-1 text-[10px] font-normal" title="Automation paused">
+                                  (auto off)
+                                </span>
+                              ) : null}
                             </span>
                             <span className="flex items-center gap-1 shrink-0">
                               {hasEscalation && (
