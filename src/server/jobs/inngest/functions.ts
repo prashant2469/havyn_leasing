@@ -2,10 +2,15 @@ import { MessageChannel, TourStatus } from "@prisma/client";
 
 import { getAutomationOrgContext } from "@/server/auth/automation-context";
 import { prisma } from "@/server/db/client";
+import { recordActivity } from "@/server/services/activity/activity.service";
 import { inngest } from "@/server/jobs/inngest/client";
 import { runCopilotAnalysis } from "@/server/services/ai/ai-copilot.service";
 import { logOutboundAutomationMessage } from "@/server/services/communications/conversation.service";
-import { dispatchAutomationReply, dispatchFirstOutreach } from "@/server/services/outbound/dispatch.service";
+import {
+  dispatchAutomationReply,
+  dispatchFirstOutreach,
+  dispatchLeadFollowUp,
+} from "@/server/services/outbound/dispatch.service";
 import { sendTransactionalEmail } from "@/server/services/outbound/resend.service";
 
 export const leadIngested = inngest.createFunction(
@@ -90,6 +95,13 @@ export const tourReminder = inngest.createFunction(
             channel: MessageChannel.IN_APP,
           });
         }
+        await recordActivity({
+          ctx,
+          verb: "tour.reminder_sent",
+          entityType: "Tour",
+          entityId: tourId,
+          metadata: { leadId, kind, outcome: "no_email" },
+        });
         return;
       }
 
@@ -116,8 +128,72 @@ export const tourReminder = inngest.createFunction(
           });
         }
       }
+
+      await recordActivity({
+        ctx,
+        verb: "tour.reminder_sent",
+        entityType: "Tour",
+        entityId: tourId,
+        metadata: {
+          leadId,
+          kind,
+          hadEmail: Boolean(email),
+        },
+      });
     });
   },
 );
 
-export const inngestFunctions = [leadIngested, messageReceived, tourReminder];
+export const leadFollowUpDue = inngest.createFunction(
+  {
+    id: "lead-follow-up-due",
+    name: "Lead follow-up due",
+    triggers: [{ event: "lead/follow_up_due" }],
+  },
+  async ({ event, step }) => {
+    const { organizationId, leadId, conversationId } = event.data;
+    await step.run("dispatch-follow-up", async () => {
+      const ctx = await getAutomationOrgContext(organizationId);
+      await dispatchLeadFollowUp(ctx, leadId, { conversationId });
+    });
+  },
+);
+
+export const leadFollowUpSweep = inngest.createFunction(
+  {
+    id: "lead-follow-up-sweep",
+    name: "Lead follow-up sweep",
+    triggers: [{ cron: "0 * * * *" }],
+  },
+  async ({ step }) => {
+    const now = new Date();
+    const dueLeads = await step.run("load-due-leads", async () =>
+      prisma.lead.findMany({
+        where: {
+          automationPaused: false,
+          nextActionAt: { lte: now },
+          followUpCount: { lt: 3 },
+          status: { notIn: ["CONVERTED", "LOST"] },
+        },
+        select: { id: true, organizationId: true },
+        take: 100,
+        orderBy: { nextActionAt: "asc" },
+      }),
+    );
+
+    for (const lead of dueLeads) {
+      await step.run(`dispatch-${lead.id}`, async () => {
+        const ctx = await getAutomationOrgContext(lead.organizationId);
+        await dispatchLeadFollowUp(ctx, lead.id);
+      });
+    }
+  },
+);
+
+export const inngestFunctions = [
+  leadIngested,
+  messageReceived,
+  tourReminder,
+  leadFollowUpDue,
+  leadFollowUpSweep,
+];

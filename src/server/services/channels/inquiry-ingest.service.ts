@@ -115,13 +115,8 @@ export async function ingestInquiry(
         externalLeadId: params.externalLeadId,
       },
     });
-  } else {
-    // Update funnel timestamps on existing lead
-    await prisma.lead.update({
-      where: { id: lead.id },
-      data: { lastResponseAt: new Date() },
-    });
   }
+  // Inbound does not touch firstResponseAt / lastResponseAt — those track org outbound only.
 
   // --- Conversation: one per lead (dedup by leadId) ---
   let conversation = await prisma.conversation.findFirst({
@@ -170,14 +165,6 @@ export async function ingestInquiry(
         externalLeadId: params.externalLeadId ?? null,
         externalThreadId: params.externalThreadId ?? null,
       },
-    },
-  });
-
-  // Update firstResponseAt if not set
-  await prisma.lead.update({
-    where: { id: lead.id },
-    data: {
-      firstResponseAt: lead.firstResponseAt ?? new Date(),
     },
   });
 

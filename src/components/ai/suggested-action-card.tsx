@@ -25,6 +25,16 @@ import {
 } from "@/server/actions/ai-copilot";
 import { cn } from "@/lib/utils";
 
+const acceptActionHint: Partial<Record<string, string>> = {
+  REPLY_NOW: "Sets a 4-hour follow-up reminder on the lead.",
+  FOLLOW_UP_24H: "Sets a follow-up for 24 hours from now.",
+  OFFER_TOUR_TIMES: "Sets a tour-oriented next action in 4 hours.",
+  ASK_QUALIFICATION: "Sets an email follow-up in 8 hours.",
+  SEND_APPLICATION_INVITE: "Moves inbox to Application started and sets a 48-hour follow-up.",
+  HAND_OFF_TO_HUMAN: "Creates a human handoff and moves the lead to Needs human review.",
+  MARK_QUALIFIED: "Sets a tour follow-up reminder in 24 hours.",
+};
+
 const actionIcon: Record<string, React.ReactNode> = {
   REPLY_NOW: <MessageSquare className="h-4 w-4" />,
   ASK_QUALIFICATION: <ClipboardList className="h-4 w-4" />,
@@ -75,7 +85,7 @@ function SingleAction({ action }: { action: AISuggestedAction }) {
             variant="default"
             className="h-7 px-2 gap-1 text-xs"
             disabled={acceptPending}
-            title="Accept"
+            title={acceptActionHint[action.actionType] ?? "Accept and apply pipeline update"}
           >
             {acceptPending ? (
               <Loader2 className="h-3 w-3 animate-spin" />

@@ -1,10 +1,20 @@
 "use server";
 
-import { ListingChannelType } from "@prisma/client";
+import { ListingChannelType, Prisma } from "@prisma/client";
+import { ZodError } from "zod";
 
 import { ingestInquiry } from "@/server/services/channels/inquiry-ingest.service";
+import { prisma } from "@/server/db/client";
 import { getPublishedPublicListing } from "@/server/services/listings/public-listing.service";
 import { publicInquiryFormSchema } from "@/server/validation/public-inquiry";
+
+function mapPublicInquiryError(e: unknown): string {
+  if (e instanceof ZodError) return "Please review the form and try again.";
+  const msg = e instanceof Error ? e.message : "";
+  if (!msg) return "Something went wrong. Please try again.";
+  if (msg.toLowerCase().includes("not available")) return "This listing is not currently available.";
+  return "We couldn't submit your request. Please check your details and try again.";
+}
 
 export type PublicInquiryActionState =
   | { ok: true; message: string }
@@ -24,6 +34,8 @@ export async function submitPublicInquiryAction(
       email: formData.get("email") || "",
       phone: formData.get("phone") || "",
       message: formData.get("message"),
+      hasPets: formData.get("hasPets") || "",
+      petsDescription: formData.get("petsDescription") || "",
       website: formData.get("website") || "",
     };
     const input = publicInquiryFormSchema.parse(raw);
@@ -41,7 +53,7 @@ export async function submitPublicInquiryAction(
       return { ok: false, message: "This listing is not available." };
     }
 
-    await ingestInquiry(
+    const ingest = await ingestInquiry(
       { organizationId: listing.organizationId, actorUserId: null },
       {
         channelType: ListingChannelType.WEBSITE,
@@ -53,16 +65,43 @@ export async function submitPublicInquiryAction(
           phone: input.phone?.trim() || null,
         },
         message: input.message,
-        sourceMetadata: { source: "public_microsite", path: `/r/${input.orgSlug}/${input.listingSlug}` },
+        sourceMetadata: {
+          source: "public_microsite",
+          path: `/r/${input.orgSlug}/${input.listingSlug}`,
+          hasPets: input.hasPets || null,
+          petsDescription: input.petsDescription?.trim() || null,
+        },
       },
     );
+
+    if (input.hasPets === "yes" || input.hasPets === "no") {
+      const petsValue =
+        input.hasPets === "yes"
+          ? input.petsDescription?.trim() || "yes"
+          : "no";
+
+      await prisma.qualificationAnswer.upsert({
+        where: { leadId_key: { leadId: ingest.leadId, key: "pets" } },
+        create: {
+          leadId: ingest.leadId,
+          key: "pets",
+          value: petsValue as Prisma.InputJsonValue,
+          source: "MANUAL",
+          metadata: { source: "public_inquiry" },
+        },
+        update: {
+          value: petsValue as Prisma.InputJsonValue,
+          source: "MANUAL",
+          metadata: { source: "public_inquiry" },
+        },
+      });
+    }
 
     return {
       ok: true,
       message: "Thanks — your message was sent. A leasing specialist will follow up soon.",
     };
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Something went wrong. Please try again.";
-    return { ok: false, message };
+    return { ok: false, message: mapPublicInquiryError(e) };
   }
 }

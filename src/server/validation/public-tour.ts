@@ -10,6 +10,8 @@ export const publicScheduleTourSchema = z.object({
   preferredDate: z.string().min(1).max(200).trim(),
   timeWindow: z.string().min(1).max(200).trim(),
   notes: z.string().max(2000).optional().or(z.literal("")),
+  hasPets: z.enum(["yes", "no", ""]).optional(),
+  petsDescription: z.string().max(500).optional().or(z.literal("")),
   website: z.string().optional(),
 });
 

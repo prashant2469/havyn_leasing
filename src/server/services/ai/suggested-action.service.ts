@@ -4,14 +4,18 @@
  * Generates AI-suggested next actions for leads from pipeline state + V4 completeness.
  */
 
-import { AISuggestedAction, AISuggestedActionType } from "@prisma/client";
+import { AISuggestedAction, AISuggestedActionType, LeadInboxStage, NextActionType } from "@prisma/client";
+import { addHours } from "date-fns";
 
 import { ActivityVerbs } from "@/domains/activity/verbs";
 import type { OrgContext } from "@/server/auth/context";
 import { prisma } from "@/server/db/client";
+import { enqueueLeadFollowUpDue } from "@/server/jobs/events";
 import { recordActivity } from "@/server/services/activity/activity.service";
 import { qualificationGapLabelsForLead } from "@/server/services/ai/copilot-qual-gaps";
+import { recordHumanHandoff } from "@/server/services/leasing/handoff.service";
 import { getQualificationCompleteness } from "@/server/services/leasing/qualification-score.service";
+import { sendToProspect } from "@/server/services/outbound/dispatch.service";
 
 interface ActionSuggestion {
   actionType: AISuggestedActionType;
@@ -160,6 +164,137 @@ export async function generateSuggestedActions(
   return created;
 }
 
+async function applySuggestedActionSideEffects(ctx: OrgContext, action: AISuggestedAction): Promise<void> {
+  const leadId = action.leadId;
+  const now = new Date();
+  const lead = await prisma.lead.findFirst({
+    where: { id: leadId, organizationId: ctx.organizationId },
+    select: { id: true, firstName: true, listing: { select: { title: true } } },
+  });
+  const conversationId =
+    action.conversationId ??
+    (
+      await prisma.conversation.findFirst({
+        where: { organizationId: ctx.organizationId, leadId },
+        select: { id: true },
+      })
+    )?.id ??
+    null;
+
+  switch (action.actionType) {
+    case AISuggestedActionType.REPLY_NOW:
+      await prisma.lead.update({
+        where: { id: leadId },
+        data: { nextActionAt: addHours(now, 4), nextActionType: NextActionType.FOLLOW_UP },
+      });
+      if (lead && conversationId) {
+        await sendToProspect(ctx, {
+          leadId,
+          conversationId,
+          body: `Hi ${lead.firstName},\n\nThanks for your message. We are on it and can help with next steps today.`,
+          subject: lead.listing?.title
+            ? `Re: ${lead.listing.title} — Havyn Leasing`
+            : "Re: your inquiry — Havyn Leasing",
+          preferredChannel: "AUTO",
+          fallbackLabel: "Reply not sent — no deliverable channel configured",
+        });
+      }
+      break;
+    case AISuggestedActionType.FOLLOW_UP_24H:
+      await prisma.lead.update({
+        where: { id: leadId },
+        data: { nextActionAt: addHours(now, 24), nextActionType: NextActionType.FOLLOW_UP },
+      });
+      await enqueueLeadFollowUpDue(
+        {
+          organizationId: ctx.organizationId,
+          leadId,
+          conversationId,
+        },
+        addHours(now, 24),
+      );
+      break;
+    case AISuggestedActionType.OFFER_TOUR_TIMES:
+      await prisma.lead.update({
+        where: { id: leadId },
+        data: { nextActionAt: addHours(now, 4), nextActionType: NextActionType.TOUR },
+      });
+      if (lead && conversationId) {
+        await sendToProspect(ctx, {
+          leadId,
+          conversationId,
+          body: `Hi ${lead.firstName},\n\nWould you like a few tour options this week? I can send times that match the showing calendar.`,
+          subject: lead.listing?.title
+            ? `Tour options for ${lead.listing.title} — Havyn Leasing`
+            : "Tour options — Havyn Leasing",
+          preferredChannel: "AUTO",
+          fallbackLabel: "Tour offer not sent — no deliverable channel configured",
+        });
+      }
+      break;
+    case AISuggestedActionType.ASK_QUALIFICATION:
+      await prisma.lead.update({
+        where: { id: leadId },
+        data: { nextActionAt: addHours(now, 8), nextActionType: NextActionType.EMAIL },
+      });
+      if (lead && conversationId) {
+        await sendToProspect(ctx, {
+          leadId,
+          conversationId,
+          body: `Hi ${lead.firstName},\n\nTo keep your options accurate, can you share your target move-in date and budget range?`,
+          subject: lead.listing?.title
+            ? `Quick details for ${lead.listing.title} — Havyn Leasing`
+            : "Quick leasing details — Havyn Leasing",
+          preferredChannel: "AUTO",
+          fallbackLabel: "Qualification prompt not sent — no deliverable channel configured",
+        });
+      }
+      break;
+    case AISuggestedActionType.SEND_APPLICATION_INVITE: {
+      const leadState = await prisma.lead.findFirst({
+        where: { id: leadId, organizationId: ctx.organizationId },
+        select: { applicationStartedAt: true },
+      });
+      await prisma.lead.update({
+        where: { id: leadId },
+        data: {
+          inboxStage: LeadInboxStage.APPLICATION_STARTED,
+          applicationStartedAt: leadState?.applicationStartedAt ?? now,
+          nextActionAt: addHours(now, 48),
+          nextActionType: NextActionType.FOLLOW_UP,
+        },
+      });
+      if (lead && conversationId) {
+        await sendToProspect(ctx, {
+          leadId,
+          conversationId,
+          body: `Hi ${lead.firstName},\n\nYou can move forward with the rental application now. Reply here if you want help with requirements or timing.`,
+          subject: lead.listing?.title
+            ? `Application invite for ${lead.listing.title} — Havyn Leasing`
+            : "Application invite — Havyn Leasing",
+          preferredChannel: "AUTO",
+          fallbackLabel: "Application invite not sent — no deliverable channel configured",
+        });
+      }
+      break;
+    }
+    case AISuggestedActionType.HAND_OFF_TO_HUMAN:
+      await recordHumanHandoff(ctx, {
+        leadId,
+        reason: "Operator accepted AI suggested action: hand off to human",
+      });
+      break;
+    case AISuggestedActionType.MARK_QUALIFIED:
+      await prisma.lead.update({
+        where: { id: leadId },
+        data: { nextActionAt: addHours(now, 24), nextActionType: NextActionType.TOUR },
+      });
+      break;
+    default:
+      break;
+  }
+}
+
 export async function acceptSuggestedAction(
   ctx: OrgContext,
   actionId: string,
@@ -173,6 +308,8 @@ export async function acceptSuggestedAction(
     where: { id: actionId },
     data: { status: "ACCEPTED", actionedByUserId: ctx.userId, actionedAt: new Date() },
   });
+
+  await applySuggestedActionSideEffects(ctx, action);
 
   await recordActivity({
     ctx,

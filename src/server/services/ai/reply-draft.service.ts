@@ -12,6 +12,7 @@ import { prisma } from "@/server/db/client";
 import { recordActivity } from "@/server/services/activity/activity.service";
 import { qualificationGapLabelsForLead } from "@/server/services/ai/copilot-qual-gaps";
 import { tryLlmReplyDraft } from "@/server/services/ai/llm/copilot-llm";
+import { sendToProspect } from "@/server/services/outbound/dispatch.service";
 import { getQualificationCompleteness } from "@/server/services/leasing/qualification-score.service";
 
 async function _generateDraftBody(conversationId: string, leadId: string): Promise<{
@@ -192,26 +193,39 @@ export async function sendApprovedDraft(
 ): Promise<{ draft: AIReplyDraft; messageId: string }> {
   const draft = await prisma.aIReplyDraft.findFirst({
     where: { id: draftId, organizationId: ctx.organizationId },
+    include: {
+      lead: {
+        select: {
+          id: true,
+          listing: { select: { title: true } },
+        },
+      },
+    },
   });
   if (!draft) throw new Error("Draft not found");
   if (draft.status !== "APPROVED") throw new Error("Draft must be approved before sending");
 
-  const message = await prisma.message.create({
-    data: {
-      conversationId: draft.conversationId,
-      direction: "OUTBOUND",
-      channel: draft.suggestedChannel,
-      body: draft.body,
-      authorType: "AI",
-      authorUserId: ctx.userId,
-      isAiGenerated: true,
-      provider: draft.modelId ?? "heuristic",
-    },
+  const sent = await sendToProspect(ctx, {
+    leadId: draft.leadId,
+    conversationId: draft.conversationId,
+    body: draft.body,
+    subject: draft.lead.listing?.title
+      ? `Re: ${draft.lead.listing.title} — Havyn Leasing`
+      : "Re: your message — Havyn Leasing",
+    preferredChannel:
+      draft.suggestedChannel === "EMAIL" || draft.suggestedChannel === "SMS"
+        ? draft.suggestedChannel
+        : "AUTO",
+    authorType: "AI",
+    authorUserId: ctx.userId,
+    isAiGenerated: true,
+    provider: draft.modelId ?? "heuristic",
+    fallbackLabel: "Draft not sent — no deliverable channel configured",
   });
 
   const updated = await prisma.aIReplyDraft.update({
     where: { id: draftId },
-    data: { status: "SENT", sentMessageId: message.id },
+    data: { status: "SENT", sentMessageId: sent.messageId },
   });
 
   await recordActivity({
@@ -219,10 +233,16 @@ export async function sendApprovedDraft(
     verb: ActivityVerbs.AI_DRAFT_SENT,
     entityType: "Lead",
     entityId: draft.leadId,
-    metadata: { draftId, messageId: message.id, conversationId: draft.conversationId },
+    metadata: {
+      draftId,
+      messageId: sent.messageId,
+      conversationId: draft.conversationId,
+      delivered: sent.delivered,
+      deliveryChannel: sent.channel,
+    },
   });
 
-  return { draft: updated, messageId: message.id };
+  return { draft: updated, messageId: sent.messageId };
 }
 
 export async function getActiveDraftForConversation(

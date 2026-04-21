@@ -1,11 +1,12 @@
 import {
+  BarChart3,
   Building2,
   Inbox,
   LayoutList,
   ListOrdered,
-  MapPin,
   ScrollText,
   Sparkles,
+  Users,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -17,10 +18,22 @@ import { tryOrgContext } from "@/server/auth/context";
 
 const shortcuts = [
   {
+    href: "/leasing",
+    title: "Leasing workspace",
+    description: "Single command center for inbox, leads, applications, and tours.",
+    icon: Users,
+  },
+  {
     href: "/leasing/inbox",
     title: "Leasing inbox",
     description: "Queues, conversation thread, lead context — operations command center.",
     icon: Inbox,
+  },
+  {
+    href: "/analysis",
+    title: "Analysis",
+    description: "Track response speed, tour completion, and application-to-lease conversion.",
+    icon: BarChart3,
   },
   {
     href: "/listings",
@@ -30,15 +43,9 @@ const shortcuts = [
   },
   {
     href: "/properties",
-    title: "Properties",
-    description: "Portfolio structure for units and listings.",
+    title: "Portfolio",
+    description: "Property and unit structure feeding listings and leasing.",
     icon: Building2,
-  },
-  {
-    href: "/units",
-    title: "Units",
-    description: "Org-wide unit index before syndication wiring.",
-    icon: MapPin,
   },
   {
     href: "/tours",
@@ -74,8 +81,8 @@ export default async function DashboardHomePage() {
         }
         actions={
           ctx ? (
-            <Link href="/leasing/inbox" className={buttonVariants()}>
-              Open inbox
+            <Link href="/leasing" className={buttonVariants()}>
+              Open leasing workspace
             </Link>
           ) : null
         }

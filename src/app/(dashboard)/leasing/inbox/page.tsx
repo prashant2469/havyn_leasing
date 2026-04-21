@@ -21,9 +21,14 @@ export default async function LeasingInboxPage() {
         title="Leasing inbox"
         description="Queues on the left, thread in the center, lead context on the right. Data from GET /api/leads?stage= and GET /api/leads/[id]."
         actions={
-          <Link href="/leasing/leads" className={cn(buttonVariants({ variant: "outline" }))}>
-            Table view
-          </Link>
+          <>
+            <Link href="/analysis" className={cn(buttonVariants({ variant: "outline" }))}>
+              Analysis
+            </Link>
+            <Link href="/leasing/leads" className={cn(buttonVariants({ variant: "outline" }))}>
+              Table view
+            </Link>
+          </>
         }
       />
       <LeasingInboxClient />

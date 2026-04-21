@@ -44,3 +44,17 @@ export const defaultReplyModeForChannel: Record<ListingChannelType, Conversation
   MANUAL: ConversationReplyMode.MANUAL_ONLY,
   OTHER: ConversationReplyMode.MANUAL_ONLY,
 };
+
+
+export const messageDirectionLabel: Record<string, string> = {
+  INBOUND: "Prospect",
+  OUTBOUND: "Team",
+};
+
+export const messageChannelLabel: Record<string, string> = {
+  EMAIL: "Email",
+  SMS: "SMS",
+  IN_APP: "Web",
+  VOICE: "Call",
+  OTHER: "Other",
+};

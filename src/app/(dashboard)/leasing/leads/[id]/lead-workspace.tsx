@@ -23,6 +23,7 @@ import { useRouter } from "next/navigation";
 import { useActionState, useEffect } from "react";
 
 import { ConversationSummaryCard } from "@/components/ai/conversation-summary-card";
+import { ConversationThread } from "@/components/communications/conversation-thread";
 import { EscalationBadge } from "@/components/ai/escalation-badge";
 import { PriorityIndicator } from "@/components/ai/priority-indicator";
 import { QualificationSnapshot } from "@/components/ai/qualification-snapshot";
@@ -60,7 +61,11 @@ import {
   reviewAIActionAction,
 } from "@/server/actions/ai-actions";
 import { updateConversationReplyModeAction } from "@/server/actions/channel";
-import { createApplicationAction, updateApplicationStatusAction } from "@/server/actions/applications";
+import {
+  createApplicationAction,
+  updateApplicationPipelineAction,
+  updateApplicationStatusAction,
+} from "@/server/actions/applications";
 import { requestHumanHandoffAction } from "@/server/actions/handoff";
 import { createLeaseFromApplicationAction } from "@/server/actions/leases";
 import { updateLeadInboxStageAction, updateLeadStatusAction } from "@/server/actions/leads";
@@ -205,7 +210,8 @@ function ApplicationIntakeReadback({ payload }: { payload: unknown }) {
     lines.push({ label: APPLICATION_INTAKE_LABELS[key], value: s });
   }
   const known = new Set(knownKeys as unknown as string[]);
-  const extras = Object.entries(p).filter(([k]) => !known.has(k));
+  const pipelineKeys = new Set(["waitingOn", "pipelineNote"]);
+  const extras = Object.entries(p).filter(([k]) => !known.has(k) && !pipelineKeys.has(k));
 
   return (
     <div className="space-y-4 text-sm">
@@ -696,6 +702,12 @@ export function LeadWorkspace({
                   />
                 </CardContent>
               </Card>
+              <ApplicationPipelineForm
+                key={`${primaryApplication.id}-pipeline`}
+                applicationId={primaryApplication.id}
+                payload={primaryApplication.payload}
+                onDone={() => router.refresh()}
+              />
               {primaryApplication.status === ApplicationStatus.APPROVED &&
               !primaryApplication.lease ? (
                 <Card>
@@ -765,28 +777,7 @@ export function LeadWorkspace({
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[320px] pr-3">
-                <div className="space-y-4">
-                  {(conversation?.messages ?? []).length === 0 ? (
-                    <p className="text-muted-foreground text-sm">No messages yet.</p>
-                  ) : (
-                    conversation!.messages.map((m) => (
-                      <div key={m.id} className="space-y-1 text-sm">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant="outline">{m.direction}</Badge>
-                          <Badge variant="secondary">{m.channel}</Badge>
-                          <Badge variant={m.isAiGenerated ? "default" : "outline"}>
-                            {m.isAiGenerated ? "AI" : m.authorType}
-                          </Badge>
-                          <span className="text-muted-foreground text-xs">
-                            {new Date(m.sentAt).toLocaleString()}
-                          </span>
-                        </div>
-                        <p className="whitespace-pre-wrap">{m.body}</p>
-                        <Separator />
-                      </div>
-                    ))
-                  )}
-                </div>
+                <ConversationThread messages={conversation?.messages ?? []} />
               </ScrollArea>
             </CardContent>
           </Card>
@@ -1209,6 +1200,69 @@ function TourStatusForm({
         <span className="text-destructive text-xs">{state.message}</span>
       ) : null}
     </form>
+  );
+}
+
+function ApplicationPipelineForm({
+  applicationId,
+  payload,
+  onDone,
+}: {
+  applicationId: string;
+  payload: unknown;
+  onDone: () => void;
+}) {
+  const [state, action, pending] = useActionState(updateApplicationPipelineAction, null);
+  useEffect(() => {
+    if (state?.ok) onDone();
+  }, [state?.ok, onDone]);
+
+  const p =
+    payload && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {};
+  const waitingDefault =
+    p.waitingOn === "prospect" || p.waitingOn === "internal" ? String(p.waitingOn) : "";
+  const noteDefault = typeof p.pipelineNote === "string" ? p.pipelineNote : "";
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Pipeline</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form action={action} className="space-y-3">
+          <input type="hidden" name="applicationId" value={applicationId} />
+          <div className="space-y-2">
+            <Label htmlFor="waitingOn">Waiting on</Label>
+            <select
+              id="waitingOn"
+              name="waitingOn"
+              defaultValue={waitingDefault}
+              className={nativeSelectClass}
+            >
+              <option value="">Not set</option>
+              <option value="prospect">Prospect</option>
+              <option value="internal">Internal team</option>
+            </select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="pipelineNote">Internal note</Label>
+            <Textarea
+              id="pipelineNote"
+              name="pipelineNote"
+              rows={3}
+              defaultValue={noteDefault}
+              placeholder="What are we blocked on?"
+            />
+          </div>
+          {state && !state.ok ? <p className="text-destructive text-sm">{state.message}</p> : null}
+          <Button type="submit" size="sm" variant="secondary" disabled={pending}>
+            {pending ? "Saving…" : "Save pipeline"}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   );
 }
 

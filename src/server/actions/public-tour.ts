@@ -1,6 +1,7 @@
 "use server";
 
 import { ListingChannelType, MessageChannel, Prisma, TourStatus } from "@prisma/client";
+import { ZodError } from "zod";
 
 import { ActivityVerbs } from "@/domains/activity/verbs";
 import { getAutomationOrgContext } from "@/server/auth/automation-context";
@@ -14,6 +15,15 @@ import { sendTransactionalEmail } from "@/server/services/outbound/resend.servic
 import { generateTourSlots } from "@/server/services/tours/slot-generator.service";
 import { scheduleTourReminders } from "@/server/services/tours/tour-reminders.service";
 import { publicBookTourSchema, publicScheduleTourSchema } from "@/server/validation/public-tour";
+
+function mapPublicTourError(e: unknown): string {
+  if (e instanceof ZodError) return "Please review the form and try again.";
+  const msg = e instanceof Error ? e.message : "";
+  if (!msg) return "Something went wrong. Please try again.";
+  if (msg.toLowerCase().includes("no longer available")) return "That tour slot is no longer available. Please choose another time.";
+  if (msg.toLowerCase().includes("couldn't find your inquiry")) return "Please send a message first, then book with the same email.";
+  return "We couldn't submit your request. Please check your details and try again.";
+}
 
 export type PublicTourActionState =
   | { ok: true; message: string }
@@ -35,6 +45,8 @@ export async function submitPublicScheduleTourAction(
       preferredDate: formData.get("preferredDate"),
       timeWindow: formData.get("timeWindow"),
       notes: formData.get("notes") || "",
+      hasPets: formData.get("hasPets") || "",
+      petsDescription: formData.get("petsDescription") || "",
       website: formData.get("website") || "",
     };
     const input = publicScheduleTourSchema.parse(raw);
@@ -57,7 +69,7 @@ export async function submitPublicScheduleTourAction(
       .filter(Boolean)
       .join("\n");
 
-    await ingestInquiry(
+    const ingest = await ingestInquiry(
       { organizationId: listing.organizationId, actorUserId: null },
       {
         channelType: ListingChannelType.WEBSITE,
@@ -75,18 +87,42 @@ export async function submitPublicScheduleTourAction(
           preferredDate: input.preferredDate,
           timeWindow: input.timeWindow,
           notes: input.notes?.trim() ?? null,
+          hasPets: input.hasPets || null,
+          petsDescription: input.petsDescription?.trim() || null,
           path: `/r/${input.orgSlug}/${input.listingSlug}`,
         },
       },
     );
 
+    if (input.hasPets === "yes" || input.hasPets === "no") {
+      const petsValue =
+        input.hasPets === "yes"
+          ? input.petsDescription?.trim() || "yes"
+          : "no";
+
+      await prisma.qualificationAnswer.upsert({
+        where: { leadId_key: { leadId: ingest.leadId, key: "pets" } },
+        create: {
+          leadId: ingest.leadId,
+          key: "pets",
+          value: petsValue as Prisma.InputJsonValue,
+          source: "MANUAL",
+          metadata: { source: "public_tour_request" },
+        },
+        update: {
+          value: petsValue as Prisma.InputJsonValue,
+          source: "MANUAL",
+          metadata: { source: "public_tour_request" },
+        },
+      });
+    }
+
     return {
       ok: true,
-      message: "Thanks — we received your tour request. Check your email for next steps.",
+      message: "Thanks - we received your tour request. We'll follow up with next steps soon.",
     };
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Something went wrong. Please try again.";
-    return { ok: false, message };
+    return { ok: false, message: mapPublicTourError(e) };
   }
 }
 
@@ -228,7 +264,6 @@ export async function bookPublicTourSlotAction(
       message: `You're booked for ${when}. A confirmation has been sent to your email when available.`,
     };
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Something went wrong. Please try again.";
-    return { ok: false, message };
+    return { ok: false, message: mapPublicTourError(e) };
   }
 }

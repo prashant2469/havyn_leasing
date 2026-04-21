@@ -59,7 +59,6 @@ export async function transitionAfterTourBooked(ctx: OrgContext, leadId: string)
     data: {
       inboxStage: LeadInboxStage.TOUR_SCHEDULED,
       status: nextStatus,
-      lastResponseAt: new Date(),
     },
   });
 

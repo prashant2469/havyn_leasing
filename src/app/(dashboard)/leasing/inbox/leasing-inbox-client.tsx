@@ -4,11 +4,13 @@ import {
   AIEscalationFlag,
   AIReplyDraft,
   AISuggestedAction,
+  ApplicationStatus,
   ConversationReplyMode,
   ConversationSummary,
   LeadInboxStage,
   LeadPrioritySignal,
   ListingChannelType,
+  NextActionType,
   QualificationAnswer,
   type LeadStatus,
 } from "@prisma/client";
@@ -17,6 +19,7 @@ import Link from "next/link";
 import { useActionState, useEffect, useMemo, useState } from "react";
 
 import { ConversationSummaryCard } from "@/components/ai/conversation-summary-card";
+import { ConversationThread } from "@/components/communications/conversation-thread";
 import { EscalationBadge } from "@/components/ai/escalation-badge";
 import { PriorityIndicator } from "@/components/ai/priority-indicator";
 import { QualificationSnapshot } from "@/components/ai/qualification-snapshot";
@@ -25,7 +28,7 @@ import { SuggestedActionCard } from "@/components/ai/suggested-action-card";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
 import { replyModeLabel } from "@/domains/channels/constants";
 import { leadStatusLabel } from "@/domains/leasing/constants";
 import { inboxQueueOrder, inboxStageLabel } from "@/domains/leasing/inbox";
@@ -33,6 +36,7 @@ import { channelTypeIcon, channelTypeLabel } from "@/domains/listings/constants"
 import { cn } from "@/lib/utils";
 import { updateConversationReplyModeAction } from "@/server/actions/channel";
 import { updateLeadInboxStageAction } from "@/server/actions/leads";
+import { logOutboundMessageAction } from "@/server/actions/messages";
 
 type LeadBrief = {
   id: string;
@@ -42,11 +46,95 @@ type LeadBrief = {
   phone: string | null;
   automationPaused: boolean;
   status: LeadStatus;
+  inboxStage: LeadInboxStage;
   nextActionAt: string | null;
+  nextActionType: NextActionType | null;
+  createdAt: string;
+  updatedAt: string;
+  firstResponseAt: string | null;
+  lastResponseAt: string | null;
   sourceChannelType: ListingChannelType | null;
   listing: { id: string; title: string } | null;
   primaryUnit: { unitNumber: string } | null;
+  tours: { id: string; scheduledAt: string; status: string }[];
+  applications: { id: string; status: ApplicationStatus }[];
+  prioritySignal: {
+    priorityTier: string;
+    isAtRisk: boolean;
+    needsImmediateResponse: boolean;
+  } | null;
+  escalationFlags: { id: string }[];
 };
+
+type WorkQueueFilter = "all" | "no_first_reply" | "overdue_next" | "tour_48h" | "app_active";
+
+const NO_FIRST_REPLY_STALE_MS = 2 * 60 * 60 * 1000;
+
+function leadMatchesWorkQueue(l: LeadBrief, f: WorkQueueFilter): boolean {
+  if (f === "all") return true;
+  const now = Date.now();
+  if (f === "no_first_reply") {
+    if (l.firstResponseAt) return false;
+    return now - new Date(l.createdAt).getTime() >= NO_FIRST_REPLY_STALE_MS;
+  }
+  if (f === "overdue_next") {
+    if (!l.nextActionAt) return false;
+    return new Date(l.nextActionAt).getTime() < now;
+  }
+  if (f === "tour_48h") {
+    const t = l.tours[0]?.scheduledAt;
+    if (!t) return false;
+    const ts = new Date(t).getTime();
+    return ts >= now - 3_600_000 && ts <= now + 48 * 3_600_000;
+  }
+  if (f === "app_active") {
+    const st = l.applications[0]?.status;
+    return st === ApplicationStatus.SUBMITTED || st === ApplicationStatus.IN_REVIEW;
+  }
+  return true;
+}
+
+function workQueueUrgencyScore(l: LeadBrief): number {
+  let s = 0;
+  const now = Date.now();
+  if (l.nextActionAt && new Date(l.nextActionAt).getTime() < now) s += 100;
+  if (!l.firstResponseAt && now - new Date(l.createdAt).getTime() >= NO_FIRST_REPLY_STALE_MS) s += 80;
+  const t = l.tours[0]?.scheduledAt;
+  if (t) {
+    const ts = new Date(t).getTime();
+    if (ts >= now - 3_600_000 && ts <= now + 48 * 3_600_000) s += 50;
+  }
+  const st = l.applications[0]?.status;
+  if (st === ApplicationStatus.IN_REVIEW || st === ApplicationStatus.SUBMITTED) s += 30;
+  return s;
+}
+
+function workQueueBadges(l: LeadBrief): { key: string; label: string; className: string }[] {
+  const out: { key: string; label: string; className: string }[] = [];
+  const now = Date.now();
+  if (l.nextActionAt && new Date(l.nextActionAt).getTime() < now) {
+    out.push({ key: "due", label: "Due", className: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300" });
+  }
+  if (!l.firstResponseAt && now - new Date(l.createdAt).getTime() >= NO_FIRST_REPLY_STALE_MS) {
+    out.push({
+      key: "noreply",
+      label: "No reply",
+      className: "bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200",
+    });
+  }
+  const t = l.tours[0]?.scheduledAt;
+  if (t) {
+    const ts = new Date(t).getTime();
+    if (ts >= now - 3_600_000 && ts <= now + 48 * 3_600_000) {
+      out.push({ key: "tour", label: "Tour", className: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300" });
+    }
+  }
+  const st = l.applications[0]?.status;
+  if (st === ApplicationStatus.IN_REVIEW || st === ApplicationStatus.SUBMITTED) {
+    out.push({ key: "app", label: "App", className: "bg-violet-100 text-violet-900 dark:bg-violet-900/30 dark:text-violet-200" });
+  }
+  return out;
+}
 
 type MessageRow = {
   id: string;
@@ -56,6 +144,7 @@ type MessageRow = {
   sentAt: string;
   authorType: string;
   isAiGenerated: boolean;
+  authorUser?: { name: string | null; email: string } | null;
 };
 
 type ActivityRow = {
@@ -154,6 +243,7 @@ export function LeasingInboxClient() {
   const qc = useQueryClient();
   const [stage, setStage] = useState<LeadInboxStage>(LeadInboxStage.NEW_INQUIRY);
   const [channelFilter, setChannelFilter] = useState<ListingChannelType | "ALL">("ALL");
+  const [workQueueFilter, setWorkQueueFilter] = useState<WorkQueueFilter>("all");
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
 
   const leadsQuery = useQuery({
@@ -169,7 +259,19 @@ export function LeasingInboxClient() {
     },
   });
 
-  const leads = useMemo(() => leadsQuery.data?.leads ?? [], [leadsQuery.data]);
+  const leadsRaw = useMemo(() => leadsQuery.data?.leads ?? [], [leadsQuery.data]);
+
+  const leads = useMemo(() => {
+    const filtered =
+      workQueueFilter === "all"
+        ? leadsRaw
+        : leadsRaw.filter((l) => leadMatchesWorkQueue(l, workQueueFilter));
+    return [...filtered].sort((a, b) => {
+      const u = workQueueUrgencyScore(b) - workQueueUrgencyScore(a);
+      if (u !== 0) return u;
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    });
+  }, [leadsRaw, workQueueFilter]);
 
   const activeLeadId = useMemo(() => {
     if (leads.length === 0) return null;
@@ -208,6 +310,7 @@ export function LeasingInboxClient() {
                   onClick={() => {
                     setStage(s);
                     setSelectedLeadId(null);
+                    setWorkQueueFilter("all");
                   }}
                   className={cn(
                     "rounded-md px-2 py-2 text-left text-sm transition-colors",
@@ -236,6 +339,7 @@ export function LeasingInboxClient() {
             onChange={(e) => {
               setChannelFilter(e.target.value as ListingChannelType | "ALL");
               setSelectedLeadId(null);
+              setWorkQueueFilter("all");
             }}
           >
             <option value="ALL">All channels</option>
@@ -260,6 +364,31 @@ export function LeasingInboxClient() {
               </span>
             )}
           </p>
+          <div className="flex flex-wrap gap-1 border-b px-2 pb-2">
+            {(
+              [
+                ["all", "All"],
+                ["no_first_reply", "No reply"],
+                ["overdue_next", "Due"],
+                ["tour_48h", "Tour 48h"],
+                ["app_active", "App"],
+              ] as const
+            ).map(([id, label]) => (
+              <Button
+                key={id}
+                type="button"
+                size="sm"
+                variant={workQueueFilter === id ? "default" : "outline"}
+                className="h-7 px-2 text-[10px]"
+                onClick={() => {
+                  setWorkQueueFilter(id);
+                  setSelectedLeadId(null);
+                }}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
           <ScrollArea className="flex-1">
             <div className="p-2">
               {leadsQuery.isLoading ? (
@@ -270,18 +399,17 @@ export function LeasingInboxClient() {
                 </p>
               ) : leads.length === 0 ? (
                 <p className="text-muted-foreground px-2 py-4 text-sm">
-                  No leads in this queue.
+                  {workQueueFilter === "all"
+                    ? "No leads in this queue."
+                    : "No leads match this work queue filter."}
                 </p>
               ) : (
                 <ul className="space-y-1">
                   {leads.map((l) => {
-                    // Detail is only available for the active lead; we can't show priority
-                    // for all leads without fetching each, so just show it inline when available
                     const isActive = activeLeadId === l.id;
-                    const priority = isActive ? detail?.copilotContext?.prioritySignal : null;
-                    const hasEscalation =
-                      isActive &&
-                      (detail?.copilotContext?.openEscalations.length ?? 0) > 0;
+                    const priority = l.prioritySignal;
+                    const hasEscalation = (l.escalationFlags?.length ?? 0) > 0;
+                    const badges = workQueueBadges(l);
                     return (
                       <li key={l.id}>
                         <button
@@ -301,7 +429,15 @@ export function LeasingInboxClient() {
                                 </span>
                               ) : null}
                             </span>
-                            <span className="flex items-center gap-1 shrink-0">
+                            <span className="flex flex-wrap items-center justify-end gap-0.5 shrink-0">
+                              {badges.map((b) => (
+                                <span
+                                  key={b.key}
+                                  className={cn("rounded px-1 py-0 text-[9px] font-medium", b.className)}
+                                >
+                                  {b.label}
+                                </span>
+                              ))}
                               {hasEscalation && (
                                 <span className="h-2 w-2 rounded-full bg-red-500 shrink-0" title="Escalation open" />
                               )}
@@ -314,7 +450,11 @@ export function LeasingInboxClient() {
                           </span>
                           {priority && priority.priorityTier !== "NORMAL" && (
                             <span className="mt-1 block">
-                              <PriorityIndicator tier={priority.priorityTier} />
+                              <PriorityIndicator
+                                tier={priority.priorityTier as "URGENT" | "HIGH" | "NORMAL" | "LOW" | "COLD"}
+                                isAtRisk={priority.isAtRisk}
+                                needsImmediateResponse={priority.needsImmediateResponse}
+                              />
                             </span>
                           )}
                         </button>
@@ -363,33 +503,7 @@ export function LeasingInboxClient() {
               <p className="text-destructive text-sm">Could not load thread.</p>
             ) : (
               <div className="space-y-4">
-                {(detail?.conversation?.messages ?? []).length === 0 ? (
-                  <p className="text-muted-foreground text-sm">No messages yet.</p>
-                ) : (
-                  detail!.conversation!.messages.map((m) => (
-                    <div key={m.id} className="space-y-1 text-sm">
-                      <div className="flex flex-wrap gap-1">
-                        <Badge variant="outline" className="text-[10px]">
-                          {m.direction}
-                        </Badge>
-                        <Badge variant="secondary" className="text-[10px]">
-                          {m.channel}
-                        </Badge>
-                        <Badge
-                          variant={m.isAiGenerated ? "default" : "outline"}
-                          className="text-[10px]"
-                        >
-                          {m.isAiGenerated ? "AI" : m.authorType}
-                        </Badge>
-                        <span className="text-muted-foreground text-[10px]">
-                          {new Date(m.sentAt).toLocaleString()}
-                        </span>
-                      </div>
-                      <p className="whitespace-pre-wrap">{m.body}</p>
-                      <Separator />
-                    </div>
-                  ))
-                )}
+                <ConversationThread messages={detail?.conversation?.messages ?? []} />
                 <Link
                   href={activeLeadId ? `/leasing/leads/${activeLeadId}` : "#"}
                   className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
@@ -399,6 +513,15 @@ export function LeasingInboxClient() {
               </div>
             )}
           </ScrollArea>
+          {detail?.lead ? (
+            <InlineOutboundComposer
+              leadId={detail.lead.id}
+              onDone={() => {
+                void qc.invalidateQueries({ queryKey: ["lead-detail", detail.lead.id] });
+                void qc.invalidateQueries({ queryKey: ["leads", "inbox"] });
+              }}
+            />
+          ) : null}
         </div>
       </section>
 
@@ -452,48 +575,52 @@ export function LeasingInboxClient() {
                 />
               )}
 
-              {/* AI Draft Reply */}
-              {detail.conversation && (
-                <ReplyDraftPanel
-                  draft={detail.copilotContext?.activeDraft ?? null}
-                  conversationId={detail.conversation.id}
-                  onSent={() => {
-                    void qc.invalidateQueries({ queryKey: ["lead-detail", detail.lead.id] });
-                  }}
-                />
-              )}
+              <details open className="rounded-md border border-border/60 bg-background/50 p-2">
+                <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-muted-foreground">Reply tools</summary>
+                <div className="mt-3 space-y-3">
+                  {detail.conversation && (
+                    <ReplyDraftPanel
+                      draft={detail.copilotContext?.activeDraft ?? null}
+                      conversationId={detail.conversation.id}
+                      onSent={() => {
+                        void qc.invalidateQueries({ queryKey: ["lead-detail", detail.lead.id] });
+                      }}
+                    />
+                  )}
 
-              {/* Suggested next actions */}
-              {detail.copilotContext && (
-                <SuggestedActionCard actions={detail.copilotContext.pendingActions} />
-              )}
+                  {detail.copilotContext && (
+                    <SuggestedActionCard actions={detail.copilotContext.pendingActions} />
+                  )}
 
-              {/* Qualification snapshot */}
-              {detail.copilotContext && (
-                <QualificationSnapshot qualifications={detail.copilotContext.qualifications} />
-              )}
+                  {detail.conversation && (
+                    <ReplyModeForm
+                      key={`${detail.conversation.id}-${detail.conversation.replyMode}`}
+                      conversationId={detail.conversation.id}
+                      currentMode={detail.conversation.replyMode}
+                      onDone={() => {
+                        void qc.invalidateQueries({ queryKey: ["lead-detail", detail.lead.id] });
+                      }}
+                    />
+                  )}
 
-              {/* Reply mode control */}
-              {detail.conversation && (
-                <ReplyModeForm
-                  key={`${detail.conversation.id}-${detail.conversation.replyMode}`}
-                  conversationId={detail.conversation.id}
-                  currentMode={detail.conversation.replyMode}
-                  onDone={() => {
-                    void qc.invalidateQueries({ queryKey: ["lead-detail", detail.lead.id] });
-                  }}
-                />
-              )}
+                  <InboxMoveForm
+                    key={`${detail.lead.id}-${detail.lead.inboxStage}`}
+                    leadId={detail.lead.id}
+                    initialStage={detail.lead.inboxStage}
+                    onDone={() => {
+                      void qc.invalidateQueries({ queryKey: ["leads", "inbox"] });
+                      void qc.invalidateQueries({ queryKey: ["lead-detail", detail.lead.id] });
+                    }}
+                  />
+                </div>
+              </details>
 
-              <InboxMoveForm
-                key={`${detail.lead.id}-${detail.lead.inboxStage}`}
-                leadId={detail.lead.id}
-                initialStage={detail.lead.inboxStage}
-                onDone={() => {
-                  void qc.invalidateQueries({ queryKey: ["leads", "inbox"] });
-                  void qc.invalidateQueries({ queryKey: ["lead-detail", detail.lead.id] });
-                }}
-              />
+              <details className="rounded-md border border-border/60 bg-background/50 p-2">
+                <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-muted-foreground">Qualification and listing</summary>
+                <div className="mt-3 space-y-3">
+                  {detail.copilotContext && (
+                    <QualificationSnapshot qualifications={detail.copilotContext.qualifications} />
+                  )}
 
               {/* Listing */}
               <div>
@@ -533,6 +660,12 @@ export function LeasingInboxClient() {
                 </div>
               )}
 
+                </div>
+              </details>
+
+              <details className="rounded-md border border-border/60 bg-background/50 p-2">
+                <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-muted-foreground">Activity</summary>
+                <div className="mt-3">
               {/* Activity */}
               <div>
                 <p className="text-muted-foreground mb-1 text-xs font-medium uppercase tracking-wide">
@@ -554,10 +687,40 @@ export function LeasingInboxClient() {
               >
                 Open full workspace
               </Link>
+                </div>
+              </details>
             </div>
           )}
         </ScrollArea>
       </aside>
+    </div>
+  );
+}
+
+
+function InlineOutboundComposer({ leadId, onDone }: { leadId: string; onDone: () => void }) {
+  const [state, action, pending] = useActionState(logOutboundMessageAction, null);
+  useEffect(() => {
+    if (state?.ok) onDone();
+  }, [state?.ok, onDone]);
+
+  return (
+    <div className="border-border border-t p-3">
+      <form action={action} className="space-y-2">
+        <input type="hidden" name="leadId" value={leadId} />
+        <input type="hidden" name="channel" value="EMAIL" />
+        <Textarea name="body" rows={3} placeholder="Write a quick follow-up..." required />
+        <div className="flex items-center justify-between gap-2">
+          {state && !state.ok ? (
+            <p className="text-destructive text-xs">{state.message}</p>
+          ) : (
+            <span className="text-muted-foreground text-xs">Sends as outbound email log.</span>
+          )}
+          <Button type="submit" size="sm" disabled={pending}>
+            {pending ? "Sending..." : "Send"}
+          </Button>
+        </div>
+      </form>
     </div>
   );
 }

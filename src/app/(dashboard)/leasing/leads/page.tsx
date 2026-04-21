@@ -1,5 +1,9 @@
+import Link from "next/link";
+
 import { PageHeader } from "@/components/shell/page-header";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { tryOrgContext } from "@/server/auth/context";
 import { prisma } from "@/server/db/client";
 
@@ -45,7 +49,14 @@ export default async function LeadsPage() {
       <PageHeader
         title="Leasing hub"
         description="Pipeline: listing → lead → inbox → tour → application. Table uses React Query (GET /api/leads). Prefer the unified inbox for daily ops."
-        actions={<CreateLeadForm properties={properties} listings={listings} />}
+        actions={
+          <>
+            <Link href="/analysis" className={cn(buttonVariants({ variant: "outline" }))}>
+              Analysis
+            </Link>
+            <CreateLeadForm properties={properties} listings={listings} />
+          </>
+        }
       />
 
       <Card>

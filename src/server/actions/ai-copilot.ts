@@ -127,6 +127,8 @@ export async function acceptSuggestedActionAction(
     const { actionId } = acceptSuggestedActionSchema.parse({ actionId: formData.get("actionId") });
     await acceptSuggestedAction(ctx, actionId);
     revalidatePath("/leasing");
+    revalidatePath("/leasing/inbox");
+    revalidatePath("/leasing/leads");
     return { success: true, data: { actionId } };
   } catch (e) {
     return { success: false, error: String(e instanceof Error ? e.message : e) };

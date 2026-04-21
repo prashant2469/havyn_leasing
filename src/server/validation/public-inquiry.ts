@@ -8,6 +8,8 @@ export const publicInquiryFormSchema = z.object({
   email: z.union([z.string().email().max(320), z.literal("")]).optional(),
   phone: z.string().max(40).optional().or(z.literal("")),
   message: z.string().min(1).max(5000).trim(),
+  hasPets: z.enum(["yes", "no", ""]).optional(),
+  petsDescription: z.string().max(500).optional().or(z.literal("")),
   /** Honeypot — should be empty */
   website: z.string().optional(),
 });

@@ -1,4 +1,5 @@
 import {
+  Prisma,
   MessageAuthorType,
   MessageChannel,
   MessageDirection,
@@ -8,6 +9,7 @@ import { ActivityVerbs } from "@/domains/activity/verbs";
 import type { OrgContext } from "@/server/auth/context";
 import { prisma } from "@/server/db/client";
 import { recordActivity } from "@/server/services/activity/activity.service";
+import { recordLeadOrgOutboundResponse } from "@/server/services/leasing/lead-response-timestamps.service";
 import type { LogOutboundMessageInput } from "@/server/validation/message";
 
 export async function getOrCreateLeadConversation(ctx: OrgContext, leadId: string) {
@@ -51,6 +53,12 @@ export async function logOutboundAutomationMessage(
     leadId: string;
     body: string;
     channel: import("@prisma/client").MessageChannel;
+    authorType?: MessageAuthorType;
+    authorUserId?: string | null;
+    isAiGenerated?: boolean;
+    provider?: string | null;
+    channelMetadata?: Prisma.InputJsonValue;
+    automation?: boolean;
   },
 ) {
   const message = await prisma.message.create({
@@ -59,9 +67,11 @@ export async function logOutboundAutomationMessage(
       direction: MessageDirection.OUTBOUND,
       channel: input.channel,
       body: input.body,
-      authorType: MessageAuthorType.USER,
-      authorUserId: ctx.userId,
-      isAiGenerated: true,
+      authorType: input.authorType ?? MessageAuthorType.USER,
+      authorUserId: input.authorUserId === undefined ? ctx.userId : input.authorUserId,
+      isAiGenerated: input.isAiGenerated ?? true,
+      provider: input.provider ?? null,
+      channelMetadata: input.channelMetadata ?? Prisma.JsonNull,
     },
   });
 
@@ -70,8 +80,15 @@ export async function logOutboundAutomationMessage(
     verb: ActivityVerbs.MESSAGE_SENT,
     entityType: "Message",
     entityId: message.id,
-    metadata: { leadId: input.leadId, channel: input.channel, automation: true },
+    metadata: {
+      leadId: input.leadId,
+      channel: input.channel,
+      automation: input.automation ?? true,
+      provider: input.provider ?? null,
+    },
   });
+
+  await recordLeadOrgOutboundResponse(ctx.organizationId, input.leadId);
 
   return message;
 }
@@ -98,6 +115,8 @@ export async function logOutboundMessage(ctx: OrgContext, input: LogOutboundMess
     entityId: message.id,
     metadata: { leadId: input.leadId, channel: input.channel },
   });
+
+  await recordLeadOrgOutboundResponse(ctx.organizationId, input.leadId);
 
   return message;
 }

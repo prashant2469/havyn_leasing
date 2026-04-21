@@ -22,6 +22,12 @@ export type TourReminderPayload = {
   kind: "24h" | "1h";
 };
 
+export type LeadFollowUpDuePayload = {
+  organizationId: string;
+  leadId: string;
+  conversationId: string | null;
+};
+
 export async function enqueueLeadIngested(payload: LeadIngestedPayload) {
   await inngest.send({
     name: "lead/ingested",
@@ -39,6 +45,14 @@ export async function enqueueMessageReceived(payload: MessageReceivedPayload) {
 export async function enqueueTourReminder(payload: TourReminderPayload, sendAt: Date) {
   await inngest.send({
     name: "tour/reminder",
+    data: payload,
+    ts: sendAt.getTime(),
+  });
+}
+
+export async function enqueueLeadFollowUpDue(payload: LeadFollowUpDuePayload, sendAt: Date) {
+  await inngest.send({
+    name: "lead/follow_up_due",
     data: payload,
     ts: sendAt.getTime(),
   });

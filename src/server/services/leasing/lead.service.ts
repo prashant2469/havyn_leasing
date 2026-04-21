@@ -1,4 +1,4 @@
-import type { LeadInboxStage, LeadStatus } from "@prisma/client";
+import { type LeadInboxStage, type LeadStatus, TourStatus } from "@prisma/client";
 
 import { ActivityVerbs } from "@/domains/activity/verbs";
 import type { OrgContext } from "@/server/auth/context";
@@ -32,6 +32,25 @@ export async function listLeads(ctx: OrgContext) {
       assignedTo: { select: { id: true, name: true, email: true } },
       property: { select: { id: true, name: true } },
       primaryUnit: { select: { id: true, unitNumber: true } },
+      tours: {
+        where: { status: TourStatus.SCHEDULED },
+        orderBy: { scheduledAt: "asc" },
+        take: 1,
+        select: { id: true, scheduledAt: true, status: true },
+      },
+      applications: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { id: true, status: true },
+      },
+      prioritySignal: {
+        select: { priorityTier: true, isAtRisk: true, needsImmediateResponse: true },
+      },
+      escalationFlags: {
+        where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } },
+        select: { id: true },
+        take: 1,
+      },
     },
   });
   const map = await listingSummaryMap(
@@ -51,6 +70,25 @@ export async function listLeadsByInboxStage(ctx: OrgContext, stage: LeadInboxSta
     include: {
       assignedTo: { select: { id: true, name: true, email: true } },
       primaryUnit: { select: { id: true, unitNumber: true } },
+      tours: {
+        where: { status: TourStatus.SCHEDULED },
+        orderBy: { scheduledAt: "asc" },
+        take: 1,
+        select: { id: true, scheduledAt: true, status: true },
+      },
+      applications: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { id: true, status: true },
+      },
+      prioritySignal: {
+        select: { priorityTier: true, isAtRisk: true, needsImmediateResponse: true },
+      },
+      escalationFlags: {
+        where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } },
+        select: { id: true },
+        take: 1,
+      },
     },
   });
   const map = await listingSummaryMap(

@@ -393,6 +393,7 @@ model Lead {
   assignedToUserId     String?
   nextActionAt         DateTime?
   nextActionType       NextActionType?
+  followUpCount        Int                   @default(0)
   notes                String?
   /// V4: when true, outbound automation (email/SMS) is paused — escalation or manual
   automationPaused     Boolean               @default(false)

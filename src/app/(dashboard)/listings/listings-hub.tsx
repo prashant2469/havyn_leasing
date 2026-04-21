@@ -198,11 +198,21 @@ export function ListingsHub({ listings }: { listings: HubListingRow[] }) {
                   ) : null}
                   <div className="flex flex-wrap gap-2">
                     {url ? (
-                      <CopyTextButton text={url} label="Copy public link" />
+                      <>
+                        <CopyTextButton text={url} label="Copy public link" />
+                        <Link
+                          href={url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={cn(buttonVariants({ variant: "secondary", size: "sm" }))}
+                        >
+                          Open public page
+                        </Link>
+                      </>
                     ) : (
                       <span title={disabledReason} className="inline-flex">
                         <Button type="button" variant="secondary" size="sm" disabled>
-                          Copy public link
+                          Public page unavailable
                         </Button>
                       </span>
                     )}
@@ -278,11 +288,21 @@ export function ListingsHub({ listings }: { listings: HubListingRow[] }) {
                       <TableCell>
                         <div className="flex flex-col gap-1">
                           {url ? (
-                            <CopyTextButton text={url} label="Copy link" className="w-full" />
+                            <>
+                              <CopyTextButton text={url} label="Copy link" className="w-full" />
+                              <Link
+                                href={url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className={cn(buttonVariants({ variant: "secondary", size: "sm" }), "w-full")}
+                              >
+                                Open public page
+                              </Link>
+                            </>
                           ) : (
                             <span title={disabledReason} className="inline-flex w-full">
                               <Button type="button" variant="secondary" size="sm" className="w-full" disabled>
-                                Copy link
+                                Public page unavailable
                               </Button>
                             </span>
                           )}

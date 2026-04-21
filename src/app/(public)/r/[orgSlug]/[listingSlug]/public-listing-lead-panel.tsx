@@ -51,6 +51,8 @@ export function PublicListingLeadPanel({
   const [preferredDate, setPreferredDate] = useState("");
   const [timeWindow, setTimeWindow] = useState("");
   const [notes, setNotes] = useState("");
+  const [hasPets, setHasPets] = useState<"" | "yes" | "no">("");
+  const [petsDescription, setPetsDescription] = useState("");
   const [slotIso, setSlotIso] = useState("");
   const [success, setSuccess] = useState<SuccessState | null>(null);
   const [error, setError] = useState<FieldError | null>(null);
@@ -78,6 +80,8 @@ export function PublicListingLeadPanel({
       fd.set("email", contact.email.trim());
       fd.set("phone", contact.phone.trim());
       fd.set("message", message);
+      fd.set("hasPets", hasPets);
+      fd.set("petsDescription", petsDescription.trim());
       fd.set("website", "");
       startTransition(async () => {
         const r = await submitPublicInquiryAction(null, fd);
@@ -112,6 +116,8 @@ export function PublicListingLeadPanel({
       fd.set("preferredDate", preferredDate.trim());
       fd.set("timeWindow", timeWindow.trim());
       fd.set("notes", notes.trim());
+      fd.set("hasPets", hasPets);
+      fd.set("petsDescription", petsDescription.trim());
       fd.set("website", "");
       startTransition(async () => {
         const r = await submitPublicScheduleTourAction(null, fd);
@@ -221,6 +227,30 @@ export function PublicListingLeadPanel({
             <form onSubmit={submitInquiry} className="space-y-4">
               <PublicContactFields idPrefix="msg" values={contact} onChange={patchContact} />
               <div className="space-y-1.5">
+                <Label htmlFor="pet-status">Do you have pets?</Label>
+                <select
+                  id="pet-status"
+                  className={fieldClass}
+                  value={hasPets}
+                  onChange={(e) => setHasPets(e.target.value as "" | "yes" | "no")}
+                >
+                  <option value="">Prefer not to say</option>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
+              </div>
+              {hasPets === "yes" ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="pet-details">Pet details</Label>
+                  <Input
+                    id="pet-details"
+                    placeholder="Type, count, and anything important"
+                    value={petsDescription}
+                    onChange={(e) => setPetsDescription(e.target.value)}
+                  />
+                </div>
+              ) : null}
+              <div className="space-y-1.5">
                 <Label htmlFor="msg-body">Your message</Label>
                 <textarea
                   id="msg-body"
@@ -274,6 +304,30 @@ export function PublicListingLeadPanel({
                 </div>
               </div>
               <div className="space-y-1.5">
+                <Label htmlFor="pet-status">Do you have pets?</Label>
+                <select
+                  id="pet-status"
+                  className={fieldClass}
+                  value={hasPets}
+                  onChange={(e) => setHasPets(e.target.value as "" | "yes" | "no")}
+                >
+                  <option value="">Prefer not to say</option>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
+              </div>
+              {hasPets === "yes" ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="pet-details">Pet details</Label>
+                  <Input
+                    id="pet-details"
+                    placeholder="Type, count, and anything important"
+                    value={petsDescription}
+                    onChange={(e) => setPetsDescription(e.target.value)}
+                  />
+                </div>
+              ) : null}
+              <div className="space-y-1.5">
                 <Label htmlFor="tour-notes">Notes (optional)</Label>
                 <textarea
                   id="tour-notes"
@@ -305,7 +359,7 @@ export function PublicListingLeadPanel({
             className="text-foreground hover:bg-muted/60 flex w-full items-center justify-between rounded-lg border bg-muted/20 px-4 py-3 text-left text-sm font-medium transition-colors"
             aria-expanded={bookOpen}
           >
-            <span>Already messaged us? Book a time</span>
+            <span>Book a confirmed time (after inquiry)</span>
             <span className="text-muted-foreground text-xs font-normal">{bookOpen ? "Hide" : "Show"}</span>
           </button>
 
@@ -319,7 +373,7 @@ export function PublicListingLeadPanel({
               ) : (
                 <form onSubmit={submitBook} className="space-y-4">
                   <p className="text-muted-foreground text-xs leading-relaxed">
-                    Use the same first name, last name, and email as your earlier message so we can match your record.
+                    You must send a message or tour request first. Then use the same first name, last name, and email here so we can match your lead record.
                   </p>
                   <PublicContactFields idPrefix="book" values={contact} onChange={patchContact} emailRequiredForFlow />
                   <div className="space-y-1.5">

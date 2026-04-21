@@ -54,6 +54,14 @@ export const updateApplicationStatusSchema = z.object({
 
 export type UpdateApplicationStatusInput = z.infer<typeof updateApplicationStatusSchema>;
 
+export const updateApplicationPipelineSchema = z.object({
+  applicationId: z.string().cuid(),
+  waitingOn: z.union([z.literal("prospect"), z.literal("internal"), z.literal("")]).optional(),
+  pipelineNote: z.string().max(2000).optional(),
+});
+
+export type UpdateApplicationPipelineInput = z.infer<typeof updateApplicationPipelineSchema>;
+
 export function parseApplicationIntakeFromFormData(formData: FormData): ApplicationIntakePayload {
   const get = (k: string) => {
     const v = formData.get(k);
