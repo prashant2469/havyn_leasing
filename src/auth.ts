@@ -11,14 +11,12 @@ const DEFAULT_LOGIN_PASSWORD = "test123";
 const googleId = process.env.AUTH_GOOGLE_ID?.trim();
 const googleSecret = process.env.AUTH_GOOGLE_SECRET?.trim();
 
-function resolveAuthSecret(): string | undefined {
-  const fromEnv =
-    process.env.AUTH_SECRET?.trim() || process.env.NEXTAUTH_SECRET?.trim();
-  if (fromEnv) return fromEnv;
-  if (process.env.NODE_ENV === "development") {
-    return "havyn-dev-auth-secret-not-for-production-use-32chars-min";
-  }
-  return undefined;
+function resolveAuthSecret(): string {
+  return (
+    process.env.AUTH_SECRET?.trim() ||
+    process.env.NEXTAUTH_SECRET?.trim() ||
+    "havyn-default-auth-secret-replace-me-in-production-32ch"
+  );
 }
 
 async function ensureDefaultLoginUser() {
