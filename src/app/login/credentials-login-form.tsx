@@ -12,7 +12,7 @@ export function CredentialsLoginForm({ callbackUrl }: { callbackUrl?: string }) 
 
   return (
     <form action={action} className="space-y-3">
-      <input type="hidden" name="callbackUrl" value={callbackUrl || "/"} />
+      <input type="hidden" name="callbackUrl" value={callbackUrl || "/leasing"} />
       <div className="space-y-1">
         <Label htmlFor="login-email">Email</Label>
         <Input

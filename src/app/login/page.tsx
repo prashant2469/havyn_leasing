@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { auth, signIn } from "@/auth";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { normalizeAuthRedirect } from "@/lib/auth-redirect";
 
 import { CredentialsLoginForm } from "./credentials-login-form";
 
@@ -19,7 +20,7 @@ export default async function LoginPage({
   if (session?.user?.id) {
     redirect("/");
   }
-  const callbackUrl = (await searchParams)?.callbackUrl || "/";
+  const callbackUrl = normalizeAuthRedirect((await searchParams)?.callbackUrl);
 
   return (
     <div className="bg-muted/30 flex min-h-svh flex-col items-center justify-center p-6">
