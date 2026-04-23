@@ -19,18 +19,119 @@ export class DevAuthError extends Error {
   }
 }
 
-async function resolveSessionUserIdFromAuth() {
+type ResolvedSessionIdentity = {
+  userId: string | null;
+  email: string | null;
+  sessionUserId: string | null;
+};
+
+function logAuthContextWarning(message: string, data: Record<string, unknown>) {
+  if (process.env.NODE_ENV === "development") return;
+  console.warn(`[auth-context] ${message}`, data);
+}
+
+async function persistActiveOrgCookieSafely(organizationId: string) {
+  try {
+    const jar = await cookies();
+    jar.set(ACTIVE_ORG_COOKIE, organizationId, {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 60 * 60 * 24 * 365,
+    });
+  } catch (error) {
+    logAuthContextWarning("unable to persist active org cookie in this render context", {
+      organizationId,
+      error: error instanceof Error ? error.message : "unknown_error",
+    });
+  }
+}
+
+async function resolveSessionIdentityFromAuth(): Promise<ResolvedSessionIdentity> {
   const session = await auth();
-  if (session?.user?.id) return session.user.id;
+  const sessionUserId = session?.user?.id?.trim() || null;
+  const email = session?.user?.email?.trim() || null;
 
-  const email = session?.user?.email?.trim();
-  if (!email) return null;
+  // Prefer a stable DB lookup by email for OAuth/JWT sessions.
+  if (email) {
+    const byEmail = await prisma.user.findFirst({
+      where: { email: { equals: email, mode: "insensitive" } },
+      select: { id: true },
+    });
+    if (byEmail?.id) {
+      return { userId: byEmail.id, email, sessionUserId };
+    }
+  }
 
-  const user = await prisma.user.findFirst({
-    where: { email: { equals: email, mode: "insensitive" } },
-    select: { id: true },
+  // Fallback: use session user id only when it maps to a DB user.
+  if (sessionUserId) {
+    const byId = await prisma.user.findUnique({
+      where: { id: sessionUserId },
+      select: { id: true },
+    });
+    if (byId?.id) {
+      return { userId: byId.id, email, sessionUserId };
+    }
+  }
+
+  return { userId: null, email, sessionUserId };
+}
+
+async function resolveSessionUserIdFromAuth() {
+  const resolved = await resolveSessionIdentityFromAuth();
+  return resolved.userId;
+}
+
+async function listMembershipsForResolvedIdentity(identity: ResolvedSessionIdentity) {
+  if (!identity.userId) return [];
+
+  const memberships = await prisma.membership.findMany({
+    where: { userId: identity.userId },
+    include: { organization: { select: { id: true, name: true } } },
+    orderBy: { organization: { name: "asc" } },
   });
-  return user?.id ?? null;
+
+  if (memberships.length === 0) {
+    logAuthContextWarning("authenticated user has no org memberships", {
+      resolvedUserId: identity.userId,
+      sessionUserId: identity.sessionUserId,
+      hasEmail: Boolean(identity.email),
+    });
+  }
+
+  return memberships;
+}
+
+async function findMembershipBySessionUserId(sessionUserId: string) {
+  const memberships = await prisma.membership.findMany({
+    where: { userId: sessionUserId },
+    include: { organization: { select: { id: true, name: true } } },
+    orderBy: { organization: { name: "asc" } },
+  });
+
+  if (memberships.length > 0) {
+    logAuthContextWarning("using session user id fallback for org membership", {
+      sessionUserId,
+    });
+  }
+
+  return memberships;
+}
+
+async function resolveMembershipsFromAuth() {
+  const identity = await resolveSessionIdentityFromAuth();
+  let memberships = await listMembershipsForResolvedIdentity(identity);
+
+  // Final fallback for legacy sessions where token user id is the DB user id.
+  if (memberships.length === 0 && identity.sessionUserId && identity.sessionUserId !== identity.userId) {
+    memberships = await findMembershipBySessionUserId(identity.sessionUserId);
+    if (memberships.length > 0) {
+      return { userId: identity.sessionUserId, memberships };
+    }
+  }
+
+  return { userId: identity.userId, memberships };
 }
 
 /**
@@ -54,16 +155,10 @@ export async function requireOrgContext(): Promise<OrgContext> {
     }
   }
 
-  const userId = await resolveSessionUserIdFromAuth();
+  const { userId, memberships } = await resolveMembershipsFromAuth();
   if (!userId) {
     throw new DevAuthError("Not signed in.");
   }
-
-  const memberships = await prisma.membership.findMany({
-    where: { userId },
-    include: { organization: { select: { id: true, name: true } } },
-    orderBy: { organization: { name: "asc" } },
-  });
 
   if (memberships.length === 0) {
     throw new DevAuthError("Your account has no organization memberships.");
@@ -76,13 +171,7 @@ export async function requireOrgContext(): Promise<OrgContext> {
     memberships[0]!;
 
   if (fromCookie !== picked.organizationId) {
-    jar.set(ACTIVE_ORG_COOKIE, picked.organizationId, {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 60 * 60 * 24 * 365,
-    });
+    await persistActiveOrgCookieSafely(picked.organizationId);
   }
 
   return { organizationId: picked.organizationId, userId, role: picked.role };
