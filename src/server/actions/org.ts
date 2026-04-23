@@ -12,16 +12,14 @@ export async function setActiveOrganizationAction(formData: FormData) {
   if (!organizationId) return { ok: false as const, error: "Missing organization" };
 
   const session = await auth();
-  const userId =
-    session?.user?.id ??
-    (session?.user?.email
-      ? (
-          await prisma.user.findFirst({
-            where: { email: { equals: session.user.email, mode: "insensitive" } },
-            select: { id: true },
-          })
-        )?.id
-      : null);
+  const userId = session?.user?.email
+    ? (
+        await prisma.user.findFirst({
+          where: { email: { equals: session.user.email, mode: "insensitive" } },
+          select: { id: true },
+        })
+      )?.id
+    : null;
   if (!userId) return { ok: false as const, error: "Not signed in" };
 
   const membership = await prisma.membership.findUnique({

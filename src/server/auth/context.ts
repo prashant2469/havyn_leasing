@@ -22,7 +22,6 @@ export class DevAuthError extends Error {
 type ResolvedSessionIdentity = {
   userId: string | null;
   email: string | null;
-  sessionUserId: string | null;
 };
 
 function logAuthContextWarning(message: string, data: Record<string, unknown>) {
@@ -48,34 +47,54 @@ async function persistActiveOrgCookieSafely(organizationId: string) {
   }
 }
 
+async function ensureUserMembershipByEmail(email: string) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const user =
+    (await prisma.user.findFirst({
+      where: { email: { equals: normalizedEmail, mode: "insensitive" } },
+      select: { id: true },
+    })) ??
+    (await prisma.user.create({
+      data: {
+        email: normalizedEmail,
+        name: normalizedEmail.split("@")[0] ?? normalizedEmail,
+      },
+      select: { id: true },
+    }));
+
+  const membershipCount = await prisma.membership.count({
+    where: { userId: user.id },
+  });
+  if (membershipCount > 0) return user.id;
+
+  const org =
+    (await prisma.organization.findFirst({
+      orderBy: { createdAt: "asc" },
+      select: { id: true },
+    })) ??
+    (await prisma.organization.create({
+      data: { name: "Havyn", slug: "havyn" },
+      select: { id: true },
+    }));
+
+  await prisma.membership.create({
+    data: {
+      userId: user.id,
+      organizationId: org.id,
+      role: MembershipRole.OWNER,
+    },
+  });
+
+  return user.id;
+}
+
 async function resolveSessionIdentityFromAuth(): Promise<ResolvedSessionIdentity> {
   const session = await auth();
-  const sessionUserId = session?.user?.id?.trim() || null;
   const email = session?.user?.email?.trim() || null;
+  if (!email) return { userId: null, email: null };
 
-  // Prefer a stable DB lookup by email for OAuth/JWT sessions.
-  if (email) {
-    const byEmail = await prisma.user.findFirst({
-      where: { email: { equals: email, mode: "insensitive" } },
-      select: { id: true },
-    });
-    if (byEmail?.id) {
-      return { userId: byEmail.id, email, sessionUserId };
-    }
-  }
-
-  // Fallback: use session user id only when it maps to a DB user.
-  if (sessionUserId) {
-    const byId = await prisma.user.findUnique({
-      where: { id: sessionUserId },
-      select: { id: true },
-    });
-    if (byId?.id) {
-      return { userId: byId.id, email, sessionUserId };
-    }
-  }
-
-  return { userId: null, email, sessionUserId };
+  const userId = await ensureUserMembershipByEmail(email);
+  return { userId, email };
 }
 
 async function resolveSessionUserIdFromAuth() {
@@ -95,24 +114,7 @@ async function listMembershipsForResolvedIdentity(identity: ResolvedSessionIdent
   if (memberships.length === 0) {
     logAuthContextWarning("authenticated user has no org memberships", {
       resolvedUserId: identity.userId,
-      sessionUserId: identity.sessionUserId,
       hasEmail: Boolean(identity.email),
-    });
-  }
-
-  return memberships;
-}
-
-async function findMembershipBySessionUserId(sessionUserId: string) {
-  const memberships = await prisma.membership.findMany({
-    where: { userId: sessionUserId },
-    include: { organization: { select: { id: true, name: true } } },
-    orderBy: { organization: { name: "asc" } },
-  });
-
-  if (memberships.length > 0) {
-    logAuthContextWarning("using session user id fallback for org membership", {
-      sessionUserId,
     });
   }
 
@@ -121,16 +123,7 @@ async function findMembershipBySessionUserId(sessionUserId: string) {
 
 async function resolveMembershipsFromAuth() {
   const identity = await resolveSessionIdentityFromAuth();
-  let memberships = await listMembershipsForResolvedIdentity(identity);
-
-  // Final fallback for legacy sessions where token user id is the DB user id.
-  if (memberships.length === 0 && identity.sessionUserId && identity.sessionUserId !== identity.userId) {
-    memberships = await findMembershipBySessionUserId(identity.sessionUserId);
-    if (memberships.length > 0) {
-      return { userId: identity.sessionUserId, memberships };
-    }
-  }
-
+  const memberships = await listMembershipsForResolvedIdentity(identity);
   return { userId: identity.userId, memberships };
 }
 

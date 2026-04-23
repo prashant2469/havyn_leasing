@@ -1,15 +1,11 @@
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 
-import { auth, signIn } from "@/auth";
-import { buttonVariants } from "@/components/ui/button";
+import { auth } from "@/auth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { normalizeAuthRedirect } from "@/lib/auth-redirect";
 
 import { CredentialsLoginForm } from "./credentials-login-form";
-
-const hasGoogle = Boolean(
-  process.env.AUTH_GOOGLE_ID?.trim() && process.env.AUTH_GOOGLE_SECRET?.trim(),
-);
 
 export default async function LoginPage({
   searchParams,
@@ -20,6 +16,19 @@ export default async function LoginPage({
   if (session?.user?.email) {
     redirect("/");
   }
+
+  const jar = await cookies();
+  for (const cookieName of [
+    "authjs.session-token",
+    "__Secure-authjs.session-token",
+    "authjs.callback-url",
+    "__Secure-authjs.callback-url",
+    "authjs.csrf-token",
+    "__Host-authjs.csrf-token",
+  ]) {
+    jar.delete(cookieName);
+  }
+
   const callbackUrl = normalizeAuthRedirect((await searchParams)?.callbackUrl);
 
   return (
@@ -31,21 +40,9 @@ export default async function LoginPage({
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <CredentialsLoginForm callbackUrl={callbackUrl} />
-          <div className="text-muted-foreground text-center text-xs">or</div>
-          {hasGoogle ? (
-            <form
-              action={async () => {
-                "use server";
-                await signIn("google", { redirectTo: callbackUrl });
-              }}
-            >
-              <button type="submit" className={buttonVariants({ className: "w-full" })}>
-                Continue with Google
-              </button>
-            </form>
-          ) : (
-            <p className="text-muted-foreground text-center text-xs">Google login is available when configured.</p>
-          )}
+          <p className="text-muted-foreground text-center text-xs">
+            Authentication is powered by Supabase email/password.
+          </p>
         </CardContent>
       </Card>
     </div>

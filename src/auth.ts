@@ -1,121 +1,37 @@
-import { MembershipRole } from "@prisma/client";
-import NextAuth from "next-auth";
-import Credentials from "next-auth/providers/credentials";
-import Google from "next-auth/providers/google";
+import { redirect } from "next/navigation";
 
-import { prisma } from "@/server/db/client";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 
-const DEFAULT_LOGIN_EMAIL = "havynrecruiting@gmail.com";
-const DEFAULT_LOGIN_PASSWORD = "test123";
+export type AppSession = {
+  user: {
+    id: string;
+    email: string | null;
+    name: string | null;
+    image: string | null;
+  };
+};
 
-const googleId = process.env.AUTH_GOOGLE_ID?.trim();
-const googleSecret = process.env.AUTH_GOOGLE_SECRET?.trim();
+export async function auth(): Promise<AppSession | null> {
+  const supabase = await getSupabaseServerClient();
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data.user) return null;
 
-function resolveAuthSecret(): string {
-  return (
-    process.env.AUTH_SECRET?.trim() ||
-    process.env.NEXTAUTH_SECRET?.trim() ||
-    "havyn-default-auth-secret-replace-me-in-production-32ch"
-  );
+  return {
+    user: {
+      id: data.user.id,
+      email: data.user.email ?? null,
+      name: (data.user.user_metadata?.name as string | undefined) ?? null,
+      image: null,
+    },
+  };
 }
 
-async function ensureDefaultLoginUser() {
-  const normalizedEmail = DEFAULT_LOGIN_EMAIL.toLowerCase();
-  const user =
-    (await prisma.user.findFirst({
-      where: { email: { equals: normalizedEmail, mode: "insensitive" } },
-      select: { id: true, email: true, name: true, image: true },
-    })) ??
-    (await prisma.user.create({
-      data: {
-        email: normalizedEmail,
-        name: "Havyn Recruiting",
-      },
-      select: { id: true, email: true, name: true, image: true },
-    }));
+export async function signOut(options?: { redirectTo?: string }) {
+  const supabase = await getSupabaseServerClient();
+  await supabase.auth.signOut();
 
-  const membershipCount = await prisma.membership.count({
-    where: { userId: user.id },
-  });
-  if (membershipCount === 0) {
-    const org =
-      (await prisma.organization.findFirst({
-        orderBy: { createdAt: "asc" },
-        select: { id: true },
-      })) ??
-      (await prisma.organization.create({
-        data: { name: "Havyn", slug: "havyn" },
-        select: { id: true },
-      }));
-
-    await prisma.membership.create({
-      data: {
-        userId: user.id,
-        organizationId: org.id,
-        role: MembershipRole.OWNER,
-      },
-    });
+  if (options?.redirectTo) {
+    redirect(options.redirectTo);
   }
-
-  return user;
 }
 
-/**
- * Single NextAuth instance used by route handlers AND imported by server
- * components / actions. The middleware uses a separate edge-safe instance
- * from auth.config.ts but shares the same secret + session strategy so
- * JWT tokens minted here are readable there.
- */
-export const { handlers, auth, signIn, signOut } = NextAuth({
-  secret: resolveAuthSecret(),
-  providers: [
-    Credentials({
-      credentials: {
-        email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" },
-      },
-      authorize: async (credentials) => {
-        const email = String(credentials?.email ?? "").trim();
-        const password = String(credentials?.password ?? "");
-        if (!email || !password) return null;
-
-        if (
-          email.toLowerCase() !== DEFAULT_LOGIN_EMAIL.toLowerCase() ||
-          password !== DEFAULT_LOGIN_PASSWORD
-        ) {
-          return null;
-        }
-
-        const user = await ensureDefaultLoginUser();
-
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          image: user.image,
-        };
-      },
-    }),
-    ...(googleId && googleSecret
-      ? [Google({ clientId: googleId, clientSecret: googleSecret })]
-      : []),
-  ],
-  session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
-  pages: { signIn: "/login" },
-  trustHost: true,
-  callbacks: {
-    async signIn() {
-      return true;
-    },
-    async jwt({ token, user }) {
-      if (user?.id) token.sub = user.id;
-      return token;
-    },
-    async session({ session, token }) {
-      if (session.user && token.sub) {
-        session.user.id = token.sub;
-      }
-      return session;
-    },
-  },
-});

@@ -1,3 +1,9 @@
-import { handlers } from "@/auth";
+import { NextResponse } from "next/server";
 
-export const { GET, POST } = handlers;
+export async function GET() {
+  return NextResponse.json({ error: "Auth endpoint removed. Use /login." }, { status: 410 });
+}
+
+export async function POST() {
+  return NextResponse.json({ error: "Auth endpoint removed. Use /login." }, { status: 410 });
+}

@@ -1,12 +1,15 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 export function CredentialsLoginForm({ callbackUrl }: { callbackUrl?: string }) {
+  const router = useRouter();
   const [pending, setPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -22,40 +25,19 @@ export function CredentialsLoginForm({ callbackUrl }: { callbackUrl?: string }) 
     const redirectTo = callbackUrl || "/leasing";
 
     try {
-      const csrfRes = await fetch("/api/auth/csrf");
-      const { csrfToken } = await csrfRes.json();
-
-      const res = await fetch("/api/auth/callback/credentials", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          csrfToken,
-          email,
-          password,
-          redirect: "false",
-          callbackUrl: redirectTo,
-          json: "true",
-        }),
-        redirect: "manual",
+      const supabase = getSupabaseBrowserClient();
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       });
 
-      if (res.ok || res.type === "opaqueredirect") {
-        window.location.href = redirectTo;
+      if (!error) {
+        router.replace(redirectTo);
+        router.refresh();
         return;
       }
 
-      const data = await res.json().catch(() => null);
-      if (data?.url) {
-        const parsed = new URL(data.url, window.location.origin);
-        if (parsed.searchParams.get("error")) {
-          setErrorMessage("Invalid email or password.");
-          return;
-        }
-        window.location.href = redirectTo;
-        return;
-      }
-
-      setErrorMessage("Invalid email or password.");
+      setErrorMessage(error.message || "Invalid email or password.");
     } catch {
       setErrorMessage("Unable to sign in right now. Please try again.");
     } finally {

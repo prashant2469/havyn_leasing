@@ -1,29 +1,19 @@
-import NextAuth from "next-auth";
+import { NextRequest, NextResponse } from "next/server";
 
-import authConfig from "@/auth.config";
-
-const { auth } = NextAuth(authConfig);
-
-export default auth((req) => {
+export default function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
   if (
     path.startsWith("/login") ||
     path.startsWith("/r/") ||
-    path.startsWith("/api/auth") ||
     path.startsWith("/api/inngest") ||
     path === "/favicon.ico" ||
     path === "/havyn-theme-boot.js"
   ) {
-    return;
+    return NextResponse.next();
   }
 
-  // Local dev: skip OAuth redirect. Identity still comes from `DEV_ORGANIZATION_ID` + `DEV_USER_ID` in `.env.local` (run `npm run db:seed`).
-  if (process.env.NODE_ENV === "development") {
-    return;
-  }
-
-  return;
-});
+  return NextResponse.next();
+}
 
 export const config = {
   matcher: [
