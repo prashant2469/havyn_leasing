@@ -9,7 +9,9 @@ import {
   Users,
 } from "lucide-react";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
+import { auth } from "@/auth";
 import { PageHeader } from "@/components/shell/page-header";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -68,6 +70,11 @@ const shortcuts = [
 ];
 
 export default async function DashboardHomePage() {
+  const session = await auth();
+  if (!session?.user?.id) {
+    redirect("/login");
+  }
+
   const ctx = await tryOrgContext();
 
   return (
@@ -77,7 +84,7 @@ export default async function DashboardHomePage() {
         description={
           ctx
             ? "Jump into the workflows that matter. Counts live in list views and the inbox."
-            : "Local dev needs a database once. After setup, this page loads full data across the app."
+            : "Sign in with an invited account to access your organization data and properties."
         }
         actions={
           ctx ? (
@@ -87,24 +94,6 @@ export default async function DashboardHomePage() {
           ) : null
         }
       />
-
-      {!ctx ? (
-        <div className="border-border bg-muted/40 rounded-lg border p-4 text-sm">
-          <p className="font-medium">Finish local setup (one command)</p>
-          <p className="text-muted-foreground mt-1">
-            Starts Postgres in Docker, applies the schema, seeds demo data, and writes{" "}
-            <code className="rounded bg-muted px-1">DEV_*</code> to{" "}
-            <code className="rounded bg-muted px-1">.env.local</code> for you.
-          </p>
-          <pre className="bg-background mt-3 overflow-x-auto rounded-md border p-3 font-mono text-xs">
-            npm run db:setup
-          </pre>
-          <p className="text-muted-foreground mt-2 text-xs">
-            Requires Docker. Then restart <code className="rounded bg-muted px-1">npm run dev</code> if
-            it is already running.
-          </p>
-        </div>
-      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {shortcuts.map((item) => {

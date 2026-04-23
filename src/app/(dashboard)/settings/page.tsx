@@ -42,7 +42,7 @@ export default async function SettingsPage() {
     <div className="space-y-8">
       <PageHeader
         title="Settings"
-        description="Organization profile, team memberships (dev stub), and residents for lease creation."
+        description="Organization profile, team memberships, security, and residents for lease creation."
       />
 
       <Card>
@@ -53,7 +53,7 @@ export default async function SettingsPage() {
           <p className="font-medium text-foreground">{org?.name}</p>
           <p>Slug: {org?.slug}</p>
           <p className="mt-2">
-            Replace the dev auth stub with Clerk, Auth.js, or your IdP; keep{" "}
+            Keep{" "}
             <code className="rounded bg-muted px-1">organizationId</code> on every query.
           </p>
         </CardContent>

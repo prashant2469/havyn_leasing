@@ -1,19 +1,25 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { auth, signIn } from "@/auth";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
+import { CredentialsLoginForm } from "./credentials-login-form";
+
 const hasGoogle = Boolean(
   process.env.AUTH_GOOGLE_ID?.trim() && process.env.AUTH_GOOGLE_SECRET?.trim(),
 );
 
-export default async function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ callbackUrl?: string }>;
+}) {
   const session = await auth();
   if (session?.user?.id) {
     redirect("/");
   }
+  const callbackUrl = (await searchParams)?.callbackUrl || "/";
 
   return (
     <div className="bg-muted/30 flex min-h-svh flex-col items-center justify-center p-6">
@@ -21,16 +27,20 @@ export default async function LoginPage() {
         <CardHeader>
           <CardTitle className="text-xl">Sign in to Havyn</CardTitle>
           <CardDescription>
-            Access is limited to users who have been invited to an organization. Sign in with the
-            Google account that matches your Havyn user email.
+            Use the default credentials below for deployment access:
+            <br />
+            <code className="bg-muted rounded px-1">havynrecruiting@gmail.com</code> /{" "}
+            <code className="bg-muted rounded px-1">test123</code>
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
+          <CredentialsLoginForm callbackUrl={callbackUrl} />
+          <div className="text-muted-foreground text-center text-xs">or</div>
           {hasGoogle ? (
             <form
               action={async () => {
                 "use server";
-                await signIn("google", { redirectTo: "/" });
+                await signIn("google", { redirectTo: callbackUrl });
               }}
             >
               <button type="submit" className={buttonVariants({ className: "w-full" })}>
@@ -38,21 +48,8 @@ export default async function LoginPage() {
               </button>
             </form>
           ) : (
-            <p className="text-muted-foreground text-sm">
-              Set <code className="bg-muted rounded px-1">AUTH_GOOGLE_ID</code> and{" "}
-              <code className="bg-muted rounded px-1">AUTH_GOOGLE_SECRET</code> in{" "}
-              <code className="bg-muted rounded px-1">.env.local</code>, or use{" "}
-              <code className="bg-muted rounded px-1">DEV_ORGANIZATION_ID</code> +{" "}
-              <code className="bg-muted rounded px-1">DEV_USER_ID</code> in development after{" "}
-              <code className="bg-muted rounded px-1">npm run db:seed</code>.
-            </p>
+            <p className="text-muted-foreground text-center text-xs">Google login is available when configured.</p>
           )}
-          <p className="text-muted-foreground text-center text-xs">
-            No account yet? Ask an org admin to add your email, then sign in here.
-          </p>
-          <Link href="/" className="text-muted-foreground text-center text-sm hover:underline">
-            Back to home
-          </Link>
         </CardContent>
       </Card>
     </div>
