@@ -26,5 +26,5 @@ export async function getAutomationOrgContext(organizationId: string): Promise<O
     throw new Error(`No membership found for organization ${organizationId}; cannot run automation.`);
   }
 
-  return { organizationId, userId: membership.userId };
+  return { organizationId, userId: membership.userId, role: membership.role };
 }

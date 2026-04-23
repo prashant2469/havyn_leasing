@@ -39,7 +39,10 @@ function assertAdminRoleBoundary(
   nextRole?: MembershipRole,
 ): void {
   if (actorRole !== MembershipRole.ADMIN) return;
-  const allowedTargetRoles = new Set([MembershipRole.MANAGER, MembershipRole.STAFF]);
+  const allowedTargetRoles: Set<MembershipRole> = new Set([
+    MembershipRole.MANAGER,
+    MembershipRole.STAFF,
+  ]);
   if (!allowedTargetRoles.has(currentRole)) {
     throw new Error("Admins can only manage manager or staff memberships.");
   }

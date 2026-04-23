@@ -25,7 +25,7 @@ export type CreateUnitInput = z.infer<typeof createUnitSchema>;
 
 export const updatePropertySchema = createPropertySchema.extend({
   id: z.string().cuid(),
-  showingSchedule: z.record(z.any()).optional(),
+  showingSchedule: z.record(z.string(), z.any()).optional(),
 });
 
 export type UpdatePropertyInput = z.infer<typeof updatePropertySchema>;

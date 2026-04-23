@@ -1,4 +1,4 @@
-import { ChannelPublishStatus, ListingChannelType } from "@prisma/client";
+import { ChannelPublishStatus, ListingChannelType, type Prisma } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 
 import { ActivityVerbs } from "@/domains/activity/verbs";
@@ -65,7 +65,7 @@ export async function createListing(ctx: OrgContext, input: CreateListingInput) 
       bathrooms: input.bathrooms ?? null,
       amenities: input.amenities ?? [],
       petPolicy: input.petPolicy || null,
-      metadata: input.metadata ?? {},
+      metadata: JSON.parse(JSON.stringify(input.metadata ?? {})) as Prisma.InputJsonValue,
       status: input.status,
     },
   });
@@ -132,10 +132,12 @@ export async function updateListing(ctx: OrgContext, input: UpdateListingInput) 
       ...(input.status !== undefined && { status: input.status }),
       ...(input.publicSlug !== undefined && { publicSlug: input.publicSlug }),
       ...(input.metadata !== undefined && {
-        metadata: {
-          ...((existing.metadata as Record<string, unknown> | null) ?? {}),
-          ...input.metadata,
-        },
+        metadata: JSON.parse(
+          JSON.stringify({
+            ...((existing.metadata as Record<string, unknown> | null) ?? {}),
+            ...input.metadata,
+          }),
+        ) as Prisma.InputJsonValue,
       }),
     },
   });

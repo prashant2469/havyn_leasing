@@ -1,3 +1,5 @@
+import { Prisma } from "@prisma/client";
+
 import type { OrgContext } from "@/server/auth/context";
 import { prisma } from "@/server/db/client";
 import { recordActivity } from "@/server/services/activity/activity.service";
@@ -105,7 +107,12 @@ export async function updateProperty(ctx: OrgContext, input: UpdatePropertyInput
       postalCode: input.postalCode,
       country: input.country,
       status: input.status,
-      showingSchedule: input.showingSchedule ?? existing.showingSchedule,
+      showingSchedule:
+        input.showingSchedule !== undefined
+          ? (input.showingSchedule as Prisma.InputJsonValue)
+          : existing.showingSchedule === null
+            ? Prisma.JsonNull
+            : (existing.showingSchedule as Prisma.InputJsonValue),
     },
   });
 
