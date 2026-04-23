@@ -1,12 +1,25 @@
 import { MembershipRole } from "@prisma/client";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import Google from "next-auth/providers/google";
 
-import authConfig from "@/auth.config";
 import { prisma } from "@/server/db/client";
 
 const DEFAULT_LOGIN_EMAIL = "havynrecruiting@gmail.com";
 const DEFAULT_LOGIN_PASSWORD = "test123";
+
+const googleId = process.env.AUTH_GOOGLE_ID?.trim();
+const googleSecret = process.env.AUTH_GOOGLE_SECRET?.trim();
+
+function resolveAuthSecret(): string | undefined {
+  const fromEnv =
+    process.env.AUTH_SECRET?.trim() || process.env.NEXTAUTH_SECRET?.trim();
+  if (fromEnv) return fromEnv;
+  if (process.env.NODE_ENV === "development") {
+    return "havyn-dev-auth-secret-not-for-production-use-32chars-min";
+  }
+  return undefined;
+}
 
 async function ensureDefaultLoginUser() {
   const normalizedEmail = DEFAULT_LOGIN_EMAIL.toLowerCase();
@@ -49,10 +62,15 @@ async function ensureDefaultLoginUser() {
   return user;
 }
 
+/**
+ * Single NextAuth instance used by route handlers AND imported by server
+ * components / actions. The middleware uses a separate edge-safe instance
+ * from auth.config.ts but shares the same secret + session strategy so
+ * JWT tokens minted here are readable there.
+ */
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  ...authConfig,
+  secret: resolveAuthSecret(),
   providers: [
-    ...(authConfig.providers ?? []),
     Credentials({
       credentials: {
         email: { label: "Email", type: "email" },
@@ -80,7 +98,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         };
       },
     }),
+    ...(googleId && googleSecret
+      ? [Google({ clientId: googleId, clientSecret: googleSecret })]
+      : []),
   ],
+  session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
+  pages: { signIn: "/login" },
+  trustHost: true,
   callbacks: {
     async signIn() {
       return true;

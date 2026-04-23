@@ -1,7 +1,6 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { signIn } from "next-auth/react";
 
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,23 +19,43 @@ export function CredentialsLoginForm({ callbackUrl }: { callbackUrl?: string }) 
     const formData = new FormData(form);
     const email = String(formData.get("email") ?? "").trim().toLowerCase();
     const password = String(formData.get("password") ?? "");
-    const callbackCandidate = formData.get("callbackUrl");
-    const redirectTo = String(callbackCandidate ?? callbackUrl ?? "/leasing");
+    const redirectTo = callbackUrl || "/leasing";
 
     try {
-      const result = await signIn("credentials", {
-        email,
-        password,
-        redirect: false,
-        redirectTo,
+      const csrfRes = await fetch("/api/auth/csrf");
+      const { csrfToken } = await csrfRes.json();
+
+      const res = await fetch("/api/auth/callback/credentials", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          csrfToken,
+          email,
+          password,
+          redirect: "false",
+          callbackUrl: redirectTo,
+          json: "true",
+        }),
+        redirect: "manual",
       });
 
-      if (result?.error) {
-        setErrorMessage("Invalid email or password.");
+      if (res.ok || res.type === "opaqueredirect") {
+        window.location.href = redirectTo;
         return;
       }
 
-      window.location.assign(result?.url || redirectTo);
+      const data = await res.json().catch(() => null);
+      if (data?.url) {
+        const parsed = new URL(data.url, window.location.origin);
+        if (parsed.searchParams.get("error")) {
+          setErrorMessage("Invalid email or password.");
+          return;
+        }
+        window.location.href = redirectTo;
+        return;
+      }
+
+      setErrorMessage("Invalid email or password.");
     } catch {
       setErrorMessage("Unable to sign in right now. Please try again.");
     } finally {
@@ -46,7 +65,6 @@ export function CredentialsLoginForm({ callbackUrl }: { callbackUrl?: string }) 
 
   return (
     <form onSubmit={onSubmit} className="space-y-3">
-      <input type="hidden" name="callbackUrl" value={callbackUrl || "/leasing"} />
       <div className="space-y-1">
         <Label htmlFor="login-email">Email</Label>
         <Input

@@ -1,4 +1,5 @@
 import type { NextAuthConfig } from "next-auth";
+import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 
 const googleId = process.env.AUTH_GOOGLE_ID?.trim();
@@ -19,11 +20,20 @@ function resolveAuthSecret(): string | undefined {
 }
 
 /**
- * Edge-safe fragment (no Prisma). Used by middleware. Full config with adapter lives in auth.ts.
+ * Edge-safe config (no Prisma). Used by middleware for JWT validation and by
+ * auth.ts as the base config. The Credentials provider stub is required so the
+ * middleware NextAuth instance recognises JWTs minted by credentials sign-in.
  */
 export default {
   secret: resolveAuthSecret(),
   providers: [
+    Credentials({
+      credentials: {
+        email: { label: "Email", type: "email" },
+        password: { label: "Password", type: "password" },
+      },
+      authorize: () => null,
+    }),
     ...(googleId && googleSecret
       ? [Google({ clientId: googleId, clientSecret: googleSecret })]
       : []),
