@@ -19,6 +19,20 @@ export class DevAuthError extends Error {
   }
 }
 
+async function resolveSessionUserIdFromAuth() {
+  const session = await auth();
+  if (session?.user?.id) return session.user.id;
+
+  const email = session?.user?.email?.trim();
+  if (!email) return null;
+
+  const user = await prisma.user.findFirst({
+    where: { email: { equals: email, mode: "insensitive" } },
+    select: { id: true },
+  });
+  return user?.id ?? null;
+}
+
 /**
  * Resolves the signed-in user and active organization (cookie + membership).
  * In development, `DEV_ORGANIZATION_ID` + `DEV_USER_ID` bypass session when both are set and valid.
@@ -40,8 +54,7 @@ export async function requireOrgContext(): Promise<OrgContext> {
     }
   }
 
-  const session = await auth();
-  const userId = session?.user?.id;
+  const userId = await resolveSessionUserIdFromAuth();
   if (!userId) {
     throw new DevAuthError("Not signed in.");
   }
@@ -97,8 +110,7 @@ export async function getSessionUserId(): Promise<string | null> {
       if (membership) return devUser;
     }
   }
-  const session = await auth();
-  return session?.user?.id ?? null;
+  return await resolveSessionUserIdFromAuth();
 }
 
 export type MembershipOrgOption = { organizationId: string; name: string };

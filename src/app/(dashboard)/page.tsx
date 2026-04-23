@@ -71,7 +71,7 @@ const shortcuts = [
 
 export default async function DashboardHomePage() {
   const session = await auth();
-  if (!session?.user?.id) {
+  if (!session?.user?.email) {
     redirect("/login");
   }
 

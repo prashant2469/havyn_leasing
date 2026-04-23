@@ -22,11 +22,7 @@ export default auth((req) => {
     return;
   }
 
-  if (!req.auth) {
-    const url = new URL("/login", req.url);
-    if (path !== "/") url.searchParams.set("callbackUrl", path);
-    return Response.redirect(url);
-  }
+  return;
 });
 
 export const config = {
