@@ -3,12 +3,15 @@
 import { revalidatePath } from "next/cache";
 
 import { requireOrgContext } from "@/server/auth/context";
+import { Permission } from "@/server/auth/permissions";
+import { requirePermission } from "@/server/auth/require-permission";
 import { logInboundPlaceholder, logOutboundMessage } from "@/server/services/communications/conversation.service";
 import { logOutboundMessageSchema } from "@/server/validation/message";
 
 export async function logOutboundMessageAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LEADS_MANAGE);
     const raw = {
       leadId: formData.get("leadId"),
       channel: formData.get("channel"),
@@ -27,6 +30,7 @@ export async function logOutboundMessageAction(_prev: unknown, formData: FormDat
 export async function logInboundPlaceholderAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LEADS_MANAGE);
     const leadId = String(formData.get("leadId"));
     const body = String(formData.get("body"));
     if (!body.trim()) throw new Error("Body required");

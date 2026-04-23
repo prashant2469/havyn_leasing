@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 
 import { requireOrgContext } from "@/server/auth/context";
+import { Permission } from "@/server/auth/permissions";
+import { requirePermission } from "@/server/auth/require-permission";
 import {
   loadCopilotContext,
   runCopilotAnalysis,
@@ -44,6 +46,7 @@ export async function runCopilotAnalysisAction(
 ): Promise<ActionResult<Awaited<ReturnType<typeof runCopilotAnalysis>>>> {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.AI_MANAGE);
     const input = runCopilotAnalysisSchema.parse({
       leadId: formData.get("leadId"),
       conversationId: formData.get("conversationId"),
@@ -62,6 +65,7 @@ export async function approveReplyDraftAction(
 ): Promise<ActionResult<{ draftId: string }>> {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.AI_MANAGE);
     const { draftId } = approveReplyDraftSchema.parse({ draftId: formData.get("draftId") });
     await approveReplyDraft(ctx, draftId);
     revalidatePath("/leasing");
@@ -77,6 +81,7 @@ export async function rejectReplyDraftAction(
 ): Promise<ActionResult<{ draftId: string }>> {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.AI_MANAGE);
     const { draftId } = rejectReplyDraftSchema.parse({ draftId: formData.get("draftId") });
     await rejectReplyDraft(ctx, draftId);
     revalidatePath("/leasing");
@@ -92,6 +97,7 @@ export async function sendApprovedDraftAction(
 ): Promise<ActionResult<{ draftId: string; messageId: string }>> {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.AI_MANAGE);
     const { draftId } = sendApprovedDraftSchema.parse({ draftId: formData.get("draftId") });
     const { messageId } = await sendApprovedDraft(ctx, draftId);
     revalidatePath("/leasing");
@@ -107,6 +113,7 @@ export async function suggestReplyDraftAction(
 ): Promise<ActionResult<{ draftId: string }>> {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.AI_MANAGE);
     const { conversationId } = suggestReplyDraftSchema.parse({
       conversationId: formData.get("conversationId"),
     });
@@ -124,6 +131,7 @@ export async function acceptSuggestedActionAction(
 ): Promise<ActionResult<{ actionId: string }>> {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.AI_MANAGE);
     const { actionId } = acceptSuggestedActionSchema.parse({ actionId: formData.get("actionId") });
     await acceptSuggestedAction(ctx, actionId);
     revalidatePath("/leasing");
@@ -141,6 +149,7 @@ export async function dismissSuggestedActionAction(
 ): Promise<ActionResult<{ actionId: string }>> {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.AI_MANAGE);
     const { actionId } = dismissSuggestedActionSchema.parse({
       actionId: formData.get("actionId"),
     });
@@ -158,6 +167,7 @@ export async function resolveEscalationAction(
 ): Promise<ActionResult<{ flagId: string }>> {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.AI_MANAGE);
     const input = resolveEscalationSchema.parse({
       flagId: formData.get("flagId"),
       resolutionNote: formData.get("resolutionNote") ?? undefined,
@@ -177,6 +187,7 @@ export async function createEscalationAction(
 ): Promise<ActionResult<{ flagId: string }>> {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.AI_MANAGE);
     const input = createEscalationSchema.parse({
       leadId: formData.get("leadId"),
       conversationId: formData.get("conversationId") ?? undefined,
@@ -197,6 +208,7 @@ export async function refreshLeadPriorityAction(
 ): Promise<ActionResult<{ tier: string }>> {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.AI_MANAGE);
     const leadId = formData.get("leadId") as string;
     if (!leadId) throw new Error("leadId required");
     const signal = await computeLeadPriority(ctx, leadId);

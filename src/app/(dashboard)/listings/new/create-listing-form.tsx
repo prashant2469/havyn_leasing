@@ -9,7 +9,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { listingStatusLabel } from "@/domains/listings/constants";
+import { useHasPermission } from "@/lib/use-permissions";
 import { createListingAction } from "@/server/actions/listings";
+import { Permission } from "@/server/auth/permissions";
 
 type UnitOption = {
   id: string;
@@ -20,7 +22,14 @@ type UnitOption = {
 const nativeSelectClass =
   "border-input bg-background focus-visible:ring-ring flex h-9 w-full rounded-md border px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-2";
 
-export function CreateListingForm({ units }: { units: UnitOption[] }) {
+export function CreateListingForm({
+  units,
+  preselectedUnitId,
+}: {
+  units: UnitOption[];
+  preselectedUnitId?: string;
+}) {
+  const canCreateListing = useHasPermission(Permission.LISTINGS_CREATE);
   const router = useRouter();
   const [state, action, pending] = useActionState(createListingAction, null);
 
@@ -29,6 +38,16 @@ export function CreateListingForm({ units }: { units: UnitOption[] }) {
       router.push(`/listings/${state.listingId}`);
     }
   }, [state, router]);
+
+  if (!canCreateListing) {
+    return (
+      <Card className="max-w-xl">
+        <CardContent className="text-muted-foreground py-6 text-sm">
+          You do not have permission to create listings.
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card className="max-w-xl">
@@ -39,7 +58,13 @@ export function CreateListingForm({ units }: { units: UnitOption[] }) {
         <form action={action} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="unitId">Unit</Label>
-            <select id="unitId" name="unitId" required className={nativeSelectClass} defaultValue="">
+            <select
+              id="unitId"
+              name="unitId"
+              required
+              className={nativeSelectClass}
+              defaultValue={preselectedUnitId ?? ""}
+            >
               <option value="" disabled>
                 Select unit
               </option>

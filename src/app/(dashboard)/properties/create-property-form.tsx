@@ -12,10 +12,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useHasPermission } from "@/lib/use-permissions";
 import { createPropertyAction } from "@/server/actions/properties";
+import { Permission } from "@/server/auth/permissions";
 
 export function CreatePropertyForm() {
+  const canCreateProperty = useHasPermission(Permission.PROPERTIES_CREATE);
   const [state, action, pending] = useActionState(createPropertyAction, null);
+
+  if (!canCreateProperty) return null;
 
   return (
     <Dialog>

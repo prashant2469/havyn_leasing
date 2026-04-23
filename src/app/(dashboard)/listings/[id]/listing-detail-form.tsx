@@ -46,6 +46,9 @@ import { CopyTextButton } from "@/components/shell/copy-button";
 import { prospectListingAbsoluteUrl, prospectListingPath } from "@/lib/public-url";
 import { CheckIcon, CircleIcon } from "lucide-react";
 import { attachListingChannelAction, updateListingAction } from "@/server/actions/listings";
+import { PhotoUploadPanel } from "./photo-upload-panel";
+import { Permission } from "@/server/auth/permissions";
+import { useHasPermission } from "@/lib/use-permissions";
 
 type SyncRun = {
   id: string;
@@ -81,6 +84,7 @@ type ListingPayload = {
   bathrooms: number | null;
   amenities: unknown;
   petPolicy: string | null;
+  metadata: unknown;
   status: ListingStatus;
   publicSlug: string | null;
   unitId: string;
@@ -109,7 +113,23 @@ function formatRelativeDate(iso: string | null): string {
   return new Date(iso).toLocaleString();
 }
 
+function listingMetadata(metadata: unknown): {
+  publicPageHeader: string;
+  accentColor: string;
+  contactEmail: string;
+  contactPhone: string;
+} {
+  const obj = typeof metadata === "object" && metadata !== null ? (metadata as Record<string, unknown>) : {};
+  return {
+    publicPageHeader: typeof obj.publicPageHeader === "string" ? obj.publicPageHeader : "",
+    accentColor: typeof obj.accentColor === "string" ? obj.accentColor : "",
+    contactEmail: typeof obj.contactEmail === "string" ? obj.contactEmail : "",
+    contactPhone: typeof obj.contactPhone === "string" ? obj.contactPhone : "",
+  };
+}
+
 function ChannelActions({ channel }: { channel: Channel }) {
+  const canPublishListing = useHasPermission(Permission.LISTINGS_PUBLISH);
   const [publishState, publishAction, publishPending] = useActionState(
     publishListingChannelAction,
     null,
@@ -154,6 +174,8 @@ function ChannelActions({ channel }: { channel: Channel }) {
 
   const error =
     publishState?.error ?? pauseState?.error ?? unpublishState?.error ?? retryState?.error;
+
+  if (!canPublishListing) return null;
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -200,6 +222,8 @@ function ChannelActions({ channel }: { channel: Channel }) {
 }
 
 export function ListingDetailForm({ listing }: { listing: ListingPayload }) {
+  const canEditListing = useHasPermission(Permission.LISTINGS_EDIT);
+  const canUploadPhotos = useHasPermission(Permission.PHOTOS_UPLOAD);
   const router = useRouter();
   const [updateState, updateAction, updatePending] = useActionState(updateListingAction, null);
   const [channelState, channelAction, channelPending] = useActionState(
@@ -232,6 +256,7 @@ export function ListingDetailForm({ listing }: { listing: ListingPayload }) {
     listing.publicSlug && websitePublished
       ? prospectListingAbsoluteUrl(listing.organization.slug, listing.publicSlug)
       : "";
+  const metadata = listingMetadata(listing.metadata);
 
   return (
     <div className="space-y-6">
@@ -266,6 +291,45 @@ export function ListingDetailForm({ listing }: { listing: ListingPayload }) {
                   Lowercase letters, numbers, and hyphens. Used in the prospect link{" "}
                   <code className="bg-muted rounded px-1">/r/{listing.organization.slug}/…</code>
                 </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="publicPageHeader">Public page header</Label>
+                <Input
+                  id="publicPageHeader"
+                  name="publicPageHeader"
+                  placeholder="e.g. Welcome to The Foundry"
+                  defaultValue={metadata.publicPageHeader}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="accentColor">Accent color (hex)</Label>
+                  <Input
+                    id="accentColor"
+                    name="accentColor"
+                    placeholder="#2563eb"
+                    defaultValue={metadata.accentColor}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="contactEmail">Public contact email</Label>
+                  <Input
+                    id="contactEmail"
+                    name="contactEmail"
+                    type="email"
+                    placeholder="leasing@example.com"
+                    defaultValue={metadata.contactEmail}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="contactPhone">Public contact phone</Label>
+                <Input
+                  id="contactPhone"
+                  name="contactPhone"
+                  placeholder="+1 555 123 4567"
+                  defaultValue={metadata.contactPhone}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="description">Description</Label>
@@ -354,9 +418,13 @@ export function ListingDetailForm({ listing }: { listing: ListingPayload }) {
               {updateState && !updateState.ok ? (
                 <p className="text-destructive text-sm">{updateState.message}</p>
               ) : null}
-              <Button type="submit" disabled={updatePending}>
-                {updatePending ? "Saving…" : "Save changes"}
-              </Button>
+              {canEditListing ? (
+                <Button type="submit" disabled={updatePending}>
+                  {updatePending ? "Saving…" : "Save changes"}
+                </Button>
+              ) : (
+                <p className="text-muted-foreground text-sm">You do not have permission to edit listing details.</p>
+              )}
             </form>
           </CardContent>
         </Card>
@@ -366,24 +434,11 @@ export function ListingDetailForm({ listing }: { listing: ListingPayload }) {
           <CardHeader>
             <CardTitle className="text-base">Photos</CardTitle>
           </CardHeader>
-          <CardContent className="text-muted-foreground space-y-2 text-sm">
-            <p>
-              Storage keys and CDN URLs are modeled on{" "}
-              <code className="bg-muted rounded px-1">ListingPhoto</code>. Wire S3 upload in a
-              follow-up.
-            </p>
-            {listing.photos.length === 0 ? (
-              <p>No photo rows yet.</p>
+          <CardContent className="text-sm">
+            {canUploadPhotos ? (
+              <PhotoUploadPanel listingId={listing.id} photos={listing.photos} />
             ) : (
-              <ul className="list-disc pl-5">
-                {listing.photos.map((p) => (
-                  <li key={p.id}>
-                    Order {p.sortOrder}
-                    {p.isPrimary ? " · primary" : ""}
-                    {p.caption ? ` — ${p.caption}` : ""}
-                  </li>
-                ))}
-              </ul>
+              <p className="text-muted-foreground text-sm">You do not have permission to manage photos.</p>
             )}
           </CardContent>
         </Card>
@@ -460,7 +515,7 @@ export function ListingDetailForm({ listing }: { listing: ListingPayload }) {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">Channel management</CardTitle>
-          {attachableChannels.length > 0 && (
+          {canEditListing && attachableChannels.length > 0 && (
             <form action={channelAction} className="flex items-center gap-2">
               <input type="hidden" name="listingId" value={listing.id} />
               <select name="channelType" className="border-input bg-background h-8 rounded-md border px-2 py-0.5 text-sm">

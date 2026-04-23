@@ -2,7 +2,7 @@ import { ApplicationStatus, LeadInboxStage, LeadStatus, type Prisma } from "@pri
 
 import type { OrgContext } from "@/server/auth/context";
 import { prisma } from "@/server/db/client";
-import { recordActivity } from "@/server/services/activity/activity.service";
+import { recordActivity, type ActivitySourceContext } from "@/server/services/activity/activity.service";
 import type {
   CreateApplicationInput,
   UpdateApplicationPipelineInput,
@@ -35,7 +35,53 @@ export async function createApplication(ctx: OrgContext, input: CreateApplicatio
     data: {
       applicationStartedAt: lead.applicationStartedAt ?? new Date(),
       inboxStage: LeadInboxStage.APPLICATION_STARTED,
-      status: lead.status === LeadStatus.NEW || lead.status === LeadStatus.CONTACTED ? LeadStatus.APPLIED : lead.status,
+      status:
+        lead.status === LeadStatus.NEW ||
+        lead.status === LeadStatus.CONTACTED ||
+        lead.status === LeadStatus.TOURING
+          ? LeadStatus.APPLIED
+          : lead.status,
+    },
+  });
+
+  return application;
+}
+
+export async function createPublicApplication(
+  ctx: ActivitySourceContext,
+  input: { leadId: string; payload?: Prisma.InputJsonValue },
+) {
+  const lead = await prisma.lead.findFirst({
+    where: { id: input.leadId, organizationId: ctx.organizationId },
+  });
+  if (!lead) throw new Error("Lead not found");
+
+  const application = await prisma.application.create({
+    data: {
+      leadId: input.leadId,
+      payload: JSON.parse(JSON.stringify(input.payload ?? {})) as Prisma.InputJsonValue,
+    },
+  });
+
+  await recordActivity({
+    ctx,
+    verb: "application.created",
+    entityType: "Application",
+    entityId: application.id,
+    metadata: { leadId: lead.id, source: "public_microsite" },
+  });
+
+  await prisma.lead.update({
+    where: { id: input.leadId },
+    data: {
+      applicationStartedAt: lead.applicationStartedAt ?? new Date(),
+      inboxStage: LeadInboxStage.APPLICATION_STARTED,
+      status:
+        lead.status === LeadStatus.NEW ||
+        lead.status === LeadStatus.CONTACTED ||
+        lead.status === LeadStatus.TOURING
+          ? LeadStatus.APPLIED
+          : lead.status,
     },
   });
 
@@ -45,6 +91,7 @@ export async function createApplication(ctx: OrgContext, input: CreateApplicatio
 export async function updateApplicationStatus(ctx: OrgContext, input: UpdateApplicationStatusInput) {
   const app = await prisma.application.findFirst({
     where: { id: input.applicationId, lead: { organizationId: ctx.organizationId } },
+    include: { lead: { select: { id: true, status: true, inboxStage: true } } },
   });
   if (!app) throw new Error("Application not found");
 
@@ -61,6 +108,21 @@ export async function updateApplicationStatus(ctx: OrgContext, input: UpdateAppl
     payloadBefore: { status: app.status },
     payloadAfter: { status: updated.status },
   });
+
+  if (updated.status === ApplicationStatus.APPROVED) {
+    await prisma.lead.update({
+      where: { id: app.leadId },
+      data: {
+        inboxStage: LeadInboxStage.APPLICATION_STARTED,
+        status:
+          app.lead.status === LeadStatus.NEW ||
+          app.lead.status === LeadStatus.CONTACTED ||
+          app.lead.status === LeadStatus.TOURING
+            ? LeadStatus.APPLIED
+            : app.lead.status,
+      },
+    });
+  }
 
   return updated;
 }

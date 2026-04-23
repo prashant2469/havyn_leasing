@@ -3,11 +3,14 @@
 import { revalidatePath } from "next/cache";
 
 import { requireOrgContext } from "@/server/auth/context";
+import { Permission } from "@/server/auth/permissions";
+import { requirePermission } from "@/server/auth/require-permission";
 import { recordHumanHandoff } from "@/server/services/leasing/handoff.service";
 
 export async function requestHumanHandoffAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LEADS_ASSIGN);
     const leadId = String(formData.get("leadId"));
     const reason = String(formData.get("reason") ?? "").trim() || null;
     const toUserIdRaw = String(formData.get("toUserId") ?? "").trim();

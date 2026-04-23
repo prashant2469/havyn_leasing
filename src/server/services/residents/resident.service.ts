@@ -31,3 +31,12 @@ export async function createResident(ctx: OrgContext, input: CreateResidentInput
 
   return resident;
 }
+
+export async function findResidentByEmail(ctx: OrgContext, email: string) {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return null;
+  return prisma.resident.findFirst({
+    where: { organizationId: ctx.organizationId, email: { equals: normalized, mode: "insensitive" } },
+    orderBy: { createdAt: "asc" },
+  });
+}

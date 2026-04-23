@@ -8,13 +8,18 @@ import { listUnitsForOrg } from "@/server/services/properties/property.service";
 
 import { CreateListingForm } from "./create-listing-form";
 
-export default async function NewListingPage() {
+export default async function NewListingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ unitId?: string }>;
+}) {
   const ctx = await tryOrgContext();
   if (!ctx) {
     return <PageHeader title="New listing" description="Configure dev auth on the dashboard home first." />;
   }
 
   const units = await listUnitsForOrg(ctx);
+  const { unitId } = await searchParams;
 
   return (
     <div className="space-y-8">
@@ -27,7 +32,7 @@ export default async function NewListingPage() {
           </Link>
         }
       />
-      <CreateListingForm units={JSON.parse(JSON.stringify(units))} />
+      <CreateListingForm units={JSON.parse(JSON.stringify(units))} preselectedUnitId={unitId} />
     </div>
   );
 }

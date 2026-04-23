@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { MembershipRole } from "@prisma/client";
 
 import { auth } from "@/auth";
 import { prisma } from "@/server/db/client";
@@ -8,6 +9,7 @@ import { ACTIVE_ORG_COOKIE } from "./constants";
 export type OrgContext = {
   organizationId: string;
   userId: string;
+  role: MembershipRole;
 };
 
 export class DevAuthError extends Error {
@@ -30,9 +32,10 @@ export async function requireOrgContext(): Promise<OrgContext> {
         where: {
           userId_organizationId: { userId: devUser, organizationId: devOrg },
         },
+        select: { role: true },
       });
       if (membership) {
-        return { organizationId: devOrg, userId: devUser };
+        return { organizationId: devOrg, userId: devUser, role: membership.role };
       }
     }
   }
@@ -59,7 +62,7 @@ export async function requireOrgContext(): Promise<OrgContext> {
     (fromCookie ? memberships.find((m) => m.organizationId === fromCookie) : null) ??
     memberships[0]!;
 
-  return { organizationId: picked.organizationId, userId };
+  return { organizationId: picked.organizationId, userId, role: picked.role };
 }
 
 export async function tryOrgContext(): Promise<OrgContext | null> {

@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 
 import { requireOrgContext } from "@/server/auth/context";
+import { Permission } from "@/server/auth/permissions";
+import { requirePermission } from "@/server/auth/require-permission";
 import {
   attachListingChannel,
   createListing,
@@ -17,6 +19,7 @@ import {
 export async function createListingAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LISTINGS_CREATE);
     const amenitiesRaw = formData.get("amenities");
     let amenities: string[] | undefined;
     if (typeof amenitiesRaw === "string" && amenitiesRaw.trim()) {
@@ -36,6 +39,7 @@ export async function createListingAction(_prev: unknown, formData: FormData) {
       bathrooms: formData.get("bathrooms") || undefined,
       amenities,
       petPolicy: formData.get("petPolicy") || undefined,
+      metadata: {},
       status: formData.get("status") || undefined,
     };
     const input = createListingSchema.parse({
@@ -57,6 +61,7 @@ export async function createListingAction(_prev: unknown, formData: FormData) {
 export async function updateListingAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LISTINGS_EDIT);
     const amenitiesRaw = formData.get("amenities");
     let amenities: string[] | undefined;
     if (typeof amenitiesRaw === "string" && amenitiesRaw.trim()) {
@@ -79,6 +84,12 @@ export async function updateListingAction(_prev: unknown, formData: FormData) {
       petPolicy: formData.get("petPolicy") || undefined,
       status: formData.get("status") || undefined,
       publicSlug: formData.has("publicSlug") ? formData.get("publicSlug") : undefined,
+      metadata: {
+        publicPageHeader: String(formData.get("publicPageHeader") ?? "").trim() || null,
+        accentColor: String(formData.get("accentColor") ?? "").trim() || null,
+        contactEmail: String(formData.get("contactEmail") ?? "").trim() || null,
+        contactPhone: String(formData.get("contactPhone") ?? "").trim() || null,
+      },
     };
     const input = updateListingSchema.parse({
       ...raw,
@@ -99,6 +110,7 @@ export async function updateListingAction(_prev: unknown, formData: FormData) {
 export async function attachListingChannelAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LISTINGS_EDIT);
     const input = attachListingChannelSchema.parse({
       listingId: formData.get("listingId"),
       channelType: formData.get("channelType"),

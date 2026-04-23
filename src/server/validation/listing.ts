@@ -18,6 +18,7 @@ export const createListingSchema = z.object({
   bathrooms: optionalNonNegativeNumber,
   amenities: z.array(z.string()).optional(),
   petPolicy: z.string().max(500).optional().or(z.literal("")),
+  metadata: z.record(z.any()).optional(),
   status: z.nativeEnum(ListingStatus).optional(),
 });
 

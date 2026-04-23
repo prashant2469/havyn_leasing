@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 
 import { requireOrgContext } from "@/server/auth/context";
+import { Permission } from "@/server/auth/permissions";
+import { requirePermission } from "@/server/auth/require-permission";
 import {
   createLead,
   updateLeadInboxStage,
@@ -17,6 +19,7 @@ import {
 export async function createLeadAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LEADS_MANAGE);
     const raw = {
       firstName: formData.get("firstName"),
       lastName: formData.get("lastName"),
@@ -42,6 +45,7 @@ export async function createLeadAction(_prev: unknown, formData: FormData) {
 export async function updateLeadStatusAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LEADS_MANAGE);
     const raw = {
       leadId: formData.get("leadId"),
       status: formData.get("status"),
@@ -68,6 +72,7 @@ export async function updateLeadStatusAction(_prev: unknown, formData: FormData)
 export async function updateLeadInboxStageAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LEADS_MANAGE);
     const input = updateLeadInboxStageSchema.parse({
       leadId: formData.get("leadId"),
       inboxStage: formData.get("inboxStage"),

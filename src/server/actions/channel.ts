@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 
 import { requireOrgContext } from "@/server/auth/context";
+import { Permission } from "@/server/auth/permissions";
+import { requirePermission } from "@/server/auth/require-permission";
 import { ingestInquiry } from "@/server/services/channels/inquiry-ingest.service";
 import {
   pauseListingChannel,
@@ -23,6 +25,7 @@ import {
 export async function publishListingChannelAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LISTINGS_PUBLISH);
     const input = publishListingChannelSchema.parse({
       listingChannelId: formData.get("listingChannelId"),
     });
@@ -38,6 +41,7 @@ export async function publishListingChannelAction(_prev: unknown, formData: Form
 export async function pauseListingChannelAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LISTINGS_PUBLISH);
     const input = pauseListingChannelSchema.parse({
       listingChannelId: formData.get("listingChannelId"),
     });
@@ -53,6 +57,7 @@ export async function pauseListingChannelAction(_prev: unknown, formData: FormDa
 export async function unpublishListingChannelAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LISTINGS_PUBLISH);
     const input = unpublishListingChannelSchema.parse({
       listingChannelId: formData.get("listingChannelId"),
     });
@@ -68,6 +73,7 @@ export async function unpublishListingChannelAction(_prev: unknown, formData: Fo
 export async function retryListingChannelSyncAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LISTINGS_PUBLISH);
     const input = retryListingChannelSyncSchema.parse({
       listingChannelId: formData.get("listingChannelId"),
     });
@@ -83,6 +89,7 @@ export async function retryListingChannelSyncAction(_prev: unknown, formData: Fo
 export async function ingestInquiryAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LEADS_MANAGE);
     const raw = {
       channelType: formData.get("channelType"),
       listingId: formData.get("listingId") || null,
@@ -113,6 +120,7 @@ export async function ingestInquiryAction(_prev: unknown, formData: FormData) {
 export async function updateConversationReplyModeAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LEADS_MANAGE);
     const input = updateConversationReplyModeSchema.parse({
       conversationId: formData.get("conversationId"),
       replyMode: formData.get("replyMode"),

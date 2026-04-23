@@ -20,7 +20,7 @@ import {
 } from "@prisma/client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useState } from "react";
 
 import { ConversationSummaryCard } from "@/components/ai/conversation-summary-card";
 import { ConversationThread } from "@/components/communications/conversation-thread";
@@ -37,7 +37,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
@@ -57,12 +56,10 @@ import {
 import { APPLICATION_INTAKE_LABELS } from "@/domains/leasing/application-intake";
 import { channelTypeIcon, channelTypeLabel } from "@/domains/listings/constants";
 import {
-  createPlaceholderAIActionsAction,
   reviewAIActionAction,
 } from "@/server/actions/ai-actions";
 import { updateConversationReplyModeAction } from "@/server/actions/channel";
 import {
-  createApplicationAction,
   updateApplicationPipelineAction,
   updateApplicationStatusAction,
 } from "@/server/actions/applications";
@@ -72,6 +69,8 @@ import { updateLeadInboxStageAction, updateLeadStatusAction } from "@/server/act
 import { logInboundPlaceholderAction, logOutboundMessageAction } from "@/server/actions/messages";
 import { upsertQualificationAction } from "@/server/actions/qualification";
 import { createTourAction, updateTourStatusAction } from "@/server/actions/tours";
+
+import { QuickActionsBar } from "./quick-actions-bar";
 
 const aiActionTypeLabel: Record<AIActionType, string> = {
   DRAFT_REPLY: "Draft reply",
@@ -103,8 +102,11 @@ type LeadPayload = {
   listing: {
     id: string;
     title: string;
+    publicSlug: string | null;
+    organization: { slug: string };
     status: string;
-    unit: { unitNumber: string; property: { name: string } };
+    monthlyRent: string;
+    unit: { id: string; unitNumber: string; property: { name: string } };
   } | null;
   tours: {
     id: string;
@@ -160,31 +162,6 @@ type CopilotContext = {
   prioritySignal: LeadPrioritySignal | null;
   qualifications: QualificationAnswer[];
 };
-
-type IntakeDefaults = Partial<Record<keyof typeof APPLICATION_INTAKE_LABELS, string>>;
-
-function intakeDefaultsFromQualifications(
-  qualifications: { key: string; value: unknown }[],
-): IntakeDefaults {
-  const byKey = Object.fromEntries(qualifications.map((q) => [q.key, q.value]));
-  const out: IntakeDefaults = {};
-  if (byKey.moveInDate != null) {
-    const s = String(byKey.moveInDate);
-    out.desiredLeaseStart = s.length >= 10 ? s.slice(0, 10) : s;
-  }
-  if (byKey.occupants != null) {
-    const n = Number(byKey.occupants);
-    if (Number.isFinite(n)) out.occupants = String(Math.trunc(n));
-  }
-  if (byKey.pets != null) {
-    out.petsDescription = String(byKey.pets);
-  }
-  if (byKey.monthlyBudget != null) {
-    const n = Number(byKey.monthlyBudget);
-    if (Number.isFinite(n)) out.monthlyIncome = String(n);
-  }
-  return out;
-}
 
 function applicationIntakeHasContent(payload: unknown): boolean {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
@@ -244,123 +221,6 @@ function ApplicationIntakeReadback({ payload }: { payload: unknown }) {
   );
 }
 
-function ApplicationCreateForm({
-  leadId,
-  defaults,
-  onDone,
-}: {
-  leadId: string;
-  defaults: IntakeDefaults;
-  onDone: () => void;
-}) {
-  const [state, action, pending] = useActionState(createApplicationAction, null);
-  useEffect(() => {
-    if (state?.ok) onDone();
-  }, [state?.ok, onDone]);
-  return (
-    <form action={action} className="space-y-6">
-      <input type="hidden" name="leadId" value={leadId} />
-      {state && !state.ok ? <p className="text-destructive text-sm">{state.message}</p> : null}
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2 sm:col-span-2">
-          <p className="text-muted-foreground text-xs">
-            All fields are optional. Anything you enter is stored on the application record for your team.
-          </p>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="employer">Employer</Label>
-          <Input id="employer" name="employer" defaultValue={defaults.employer} autoComplete="organization" />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="jobTitle">Job title</Label>
-          <Input id="jobTitle" name="jobTitle" defaultValue={defaults.jobTitle} />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="monthlyIncome">Monthly income</Label>
-          <Input
-            id="monthlyIncome"
-            name="monthlyIncome"
-            type="number"
-            min={0}
-            step={1}
-            defaultValue={defaults.monthlyIncome}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="otherIncome">Other income</Label>
-          <Input
-            id="otherIncome"
-            name="otherIncome"
-            type="number"
-            min={0}
-            step={1}
-            defaultValue={defaults.otherIncome}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="desiredLeaseStart">Desired lease start</Label>
-          <Input id="desiredLeaseStart" name="desiredLeaseStart" type="date" defaultValue={defaults.desiredLeaseStart} />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="leaseTermMonths">Lease term (months)</Label>
-          <Input
-            id="leaseTermMonths"
-            name="leaseTermMonths"
-            type="number"
-            min={1}
-            max={120}
-            step={1}
-            defaultValue={defaults.leaseTermMonths}
-            placeholder="e.g. 12"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="occupants">Occupants</Label>
-          <Input
-            id="occupants"
-            name="occupants"
-            type="number"
-            min={1}
-            max={50}
-            step={1}
-            defaultValue={defaults.occupants}
-          />
-        </div>
-        <div className="space-y-2 sm:col-span-2">
-          <Label htmlFor="petsDescription">Pets</Label>
-          <Textarea id="petsDescription" name="petsDescription" rows={2} defaultValue={defaults.petsDescription} />
-        </div>
-        <div className="space-y-2 sm:col-span-2">
-          <Label htmlFor="vehicleParking">Vehicle / parking</Label>
-          <Input id="vehicleParking" name="vehicleParking" defaultValue={defaults.vehicleParking} />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="emergencyContactName">Emergency contact name</Label>
-          <Input id="emergencyContactName" name="emergencyContactName" defaultValue={defaults.emergencyContactName} />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="emergencyContactPhone">Emergency contact phone</Label>
-          <Input
-            id="emergencyContactPhone"
-            name="emergencyContactPhone"
-            type="tel"
-            defaultValue={defaults.emergencyContactPhone}
-          />
-        </div>
-        <div className="space-y-2 sm:col-span-2">
-          <Label htmlFor="additionalNotes">Additional notes</Label>
-          <Textarea id="additionalNotes" name="additionalNotes" rows={3} defaultValue={defaults.additionalNotes} />
-        </div>
-      </div>
-
-      <Button type="submit" disabled={pending}>
-        {pending ? "Starting…" : "Start application"}
-      </Button>
-    </form>
-  );
-}
-
 export function LeadWorkspace({
   lead,
   conversation,
@@ -369,6 +229,7 @@ export function LeadWorkspace({
   copilotContext,
   residents,
   properties,
+  initialTab = "overview",
 }: {
   lead: LeadPayload;
   conversation: {
@@ -381,15 +242,24 @@ export function LeadWorkspace({
   activities: ActivityRow[];
   aiActions: AIActionRow[];
   copilotContext: CopilotContext | null;
-  residents: { id: string; firstName: string; lastName: string }[];
+  residents: { id: string; firstName: string; lastName: string; email: string | null; phone: string | null }[];
   properties: {
     id: string;
     name: string;
     units: { id: string; unitNumber: string }[];
   }[];
+  initialTab?:
+    | "overview"
+    | "qualification"
+    | "tours"
+    | "application"
+    | "communications"
+    | "activity"
+    | "copilot";
 }) {
   const router = useRouter();
   const leadId = lead.id;
+  const [activeTab, setActiveTab] = useState(initialTab);
 
   const flatUnits = properties.flatMap((p) =>
     p.units.map((u) => ({ ...u, propertyName: p.name })),
@@ -428,7 +298,33 @@ export function LeadWorkspace({
         )}
       </div>
 
-      <Tabs defaultValue="overview" className="gap-4">
+      <QuickActionsBar
+        lead={{
+          id: lead.id,
+          firstName: lead.firstName,
+          lastName: lead.lastName,
+          email: lead.email,
+          phone: lead.phone,
+          status: lead.status,
+          primaryUnitId: lead.primaryUnit?.id ?? null,
+          listing: lead.listing
+            ? {
+                id: lead.listing.id,
+                publicSlug: lead.listing.publicSlug,
+                organizationSlug: lead.listing.organization.slug,
+                monthlyRent: lead.listing.monthlyRent,
+                unit: { id: lead.listing.unit.id },
+              }
+            : null,
+          tours: lead.tours.map((tour) => ({ id: tour.id })),
+        }}
+        application={primaryApplication}
+        residents={residents}
+        units={flatUnits}
+        onDone={() => router.refresh()}
+      />
+
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as typeof activeTab)} className="gap-4">
         <TabsList variant="line" className="flex-wrap">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="qualification">Qualification</TabsTrigger>
@@ -653,12 +549,25 @@ export function LeadWorkspace({
               <CardHeader>
                 <CardTitle className="text-base">Application</CardTitle>
               </CardHeader>
-              <CardContent>
-                <ApplicationCreateForm
-                  leadId={leadId}
-                  defaults={intakeDefaultsFromQualifications(lead.qualifications)}
-                  onDone={() => router.refresh()}
-                />
+              <CardContent className="space-y-3 text-sm">
+                <p className="text-muted-foreground">
+                  Waiting for prospect to submit their application. Share the public listing link to invite them.
+                </p>
+                {lead.listing?.publicSlug ? (
+                  <p>
+                    Application link:{" "}
+                    <a
+                      href={`/r/${lead.listing.organization.slug}/${lead.listing.publicSlug}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-primary underline"
+                    >
+                      /r/{lead.listing.organization.slug}/{lead.listing.publicSlug}
+                    </a>
+                  </p>
+                ) : (
+                  <p className="text-muted-foreground">No listing is linked to this lead yet.</p>
+                )}
               </CardContent>
             </Card>
           ) : (
@@ -1459,22 +1368,6 @@ function InboundForm({ leadId, onDone }: { leadId: string; onDone: () => void })
       {state && !state.ok ? <p className="text-destructive text-sm">{state.message}</p> : null}
       <Button type="submit" size="sm" variant="secondary" disabled={pending}>
         Log inbound
-      </Button>
-    </form>
-  );
-}
-
-function PlaceholderAIGenerateForm({ leadId, onDone }: { leadId: string; onDone: () => void }) {
-  const [state, action, pending] = useActionState(createPlaceholderAIActionsAction, null);
-  useEffect(() => {
-    if (state?.ok) onDone();
-  }, [state?.ok, onDone]);
-  return (
-    <form action={action}>
-      <input type="hidden" name="leadId" value={leadId} />
-      {state && !state.ok ? <p className="text-destructive text-sm">{state.message}</p> : null}
-      <Button type="submit" variant="outline" size="sm" disabled={pending}>
-        Generate placeholder AI actions
       </Button>
     </form>
   );

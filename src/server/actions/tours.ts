@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 
 import { requireOrgContext } from "@/server/auth/context";
+import { Permission } from "@/server/auth/permissions";
+import { requirePermission } from "@/server/auth/require-permission";
 import { prisma } from "@/server/db/client";
 import { createTour, updateTourStatus } from "@/server/services/leasing/tour.service";
 import { createTourSchema, updateTourStatusSchema } from "@/server/validation/tour";
@@ -19,6 +21,7 @@ async function tourLeadId(organizationId: string, tourId: string) {
 export async function createTourAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.TOURS_MANAGE);
     const raw = {
       leadId: formData.get("leadId"),
       listingId: formData.get("listingId") || undefined,
@@ -43,6 +46,7 @@ export async function createTourAction(_prev: unknown, formData: FormData) {
 export async function updateTourStatusAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.TOURS_MANAGE);
     const raw = {
       tourId: formData.get("tourId"),
       status: formData.get("status"),

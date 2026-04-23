@@ -17,6 +17,8 @@ import { tryOrgContext } from "@/server/auth/context";
 import { getPropertyById } from "@/server/services/properties/property.service";
 
 import { CreateUnitForm } from "./create-unit-form";
+import { EditPropertyForm } from "./edit-property-form";
+import { EditUnitForm } from "./edit-unit-form";
 
 export default async function PropertyDetailPage({
   params,
@@ -48,6 +50,15 @@ export default async function PropertyDetailPage({
       />
 
       <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Property profile</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <EditPropertyForm property={property} />
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">Units</CardTitle>
           <CreateUnitForm propertyId={property.id} />
@@ -60,12 +71,13 @@ export default async function PropertyDetailPage({
                 <TableHead>Beds / baths</TableHead>
                 <TableHead>Sq ft</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead className="w-[220px] text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {property.units.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-muted-foreground py-8 text-center">
+                  <TableCell colSpan={5} className="text-muted-foreground py-8 text-center">
                     No units yet.
                   </TableCell>
                 </TableRow>
@@ -78,6 +90,27 @@ export default async function PropertyDetailPage({
                     </TableCell>
                     <TableCell>{u.sqft ?? "—"}</TableCell>
                     <TableCell>{u.status}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Link
+                          href={`/listings/new?unitId=${u.id}`}
+                          className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+                        >
+                          Create listing
+                        </Link>
+                        <EditUnitForm
+                          unit={{
+                            id: u.id,
+                            propertyId: property.id,
+                            unitNumber: u.unitNumber,
+                            beds: u.beds,
+                            baths: u.baths,
+                            sqft: u.sqft,
+                            status: u.status,
+                          }}
+                        />
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))
               )}

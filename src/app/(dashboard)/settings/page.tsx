@@ -9,9 +9,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { tryOrgContext } from "@/server/auth/context";
+import { Permission, hasPermission } from "@/server/auth/permissions";
 import { prisma } from "@/server/db/client";
 
 import { CreateResidentForm } from "./create-resident-form";
+import { InviteTeamMemberForm } from "./invite-team-member-form";
+import { TeamMemberActions } from "./team-member-actions";
 
 export default async function SettingsPage() {
   const ctx = await tryOrgContext();
@@ -31,6 +34,9 @@ export default async function SettingsPage() {
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
     }),
   ]);
+  const canInvite = hasPermission(ctx.role, Permission.TEAM_INVITE);
+  const canManageRoles = hasPermission(ctx.role, Permission.TEAM_MANAGE_ROLES);
+  const canEditSettings = hasPermission(ctx.role, Permission.SETTINGS_EDIT);
 
   return (
     <div className="space-y-8">
@@ -57,13 +63,15 @@ export default async function SettingsPage() {
         <CardHeader>
           <CardTitle className="text-base">Team</CardTitle>
         </CardHeader>
-        <CardContent className="p-0">
+        <CardContent className="space-y-5 p-6">
+          <InviteTeamMemberForm canInvite={canInvite} />
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Role</TableHead>
+                <TableHead className="w-[280px]">Manage</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -72,6 +80,14 @@ export default async function SettingsPage() {
                   <TableCell>{m.user.name ?? "—"}</TableCell>
                   <TableCell>{m.user.email}</TableCell>
                   <TableCell>{m.role}</TableCell>
+                  <TableCell>
+                    <TeamMemberActions
+                      membershipId={m.id}
+                      currentRole={m.role}
+                      canManageRoles={canManageRoles}
+                      isCurrentUser={m.userId === ctx.userId}
+                    />
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -82,7 +98,7 @@ export default async function SettingsPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">Residents</CardTitle>
-          <CreateResidentForm />
+          {canEditSettings ? <CreateResidentForm /> : null}
         </CardHeader>
         <CardContent className="p-0">
           <Table>

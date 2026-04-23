@@ -14,10 +14,13 @@ import { LeadWorkspace } from "./lead-workspace";
 
 export default async function LeadDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }) {
   const { id } = await params;
+  const { tab } = await searchParams;
   const ctx = await tryOrgContext();
   if (!ctx) {
     return <PageHeader title="Lead" description="Configure dev auth on the dashboard home first." />;
@@ -54,6 +57,17 @@ export default async function LeadDetailPage({
       copilotContext={copilotContext ? JSON.parse(JSON.stringify(copilotContext)) : null}
       residents={JSON.parse(JSON.stringify(residents))}
       properties={JSON.parse(JSON.stringify(properties))}
+      initialTab={
+        tab === "overview" ||
+        tab === "qualification" ||
+        tab === "tours" ||
+        tab === "application" ||
+        tab === "communications" ||
+        tab === "activity" ||
+        tab === "copilot"
+          ? tab
+          : "overview"
+      }
     />
   );
 }

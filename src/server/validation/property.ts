@@ -1,4 +1,4 @@
-import { PropertyStatus } from "@prisma/client";
+import { PropertyStatus, UnitStatus } from "@prisma/client";
 import { z } from "zod";
 
 export const createPropertySchema = z.object({
@@ -22,3 +22,28 @@ export const createUnitSchema = z.object({
 });
 
 export type CreateUnitInput = z.infer<typeof createUnitSchema>;
+
+export const updatePropertySchema = createPropertySchema.extend({
+  id: z.string().cuid(),
+  showingSchedule: z.record(z.any()).optional(),
+});
+
+export type UpdatePropertyInput = z.infer<typeof updatePropertySchema>;
+
+export const deletePropertySchema = z.object({
+  id: z.string().cuid(),
+});
+
+export type DeletePropertyInput = z.infer<typeof deletePropertySchema>;
+
+export const updateUnitSchema = z.object({
+  id: z.string().cuid(),
+  propertyId: z.string().cuid(),
+  unitNumber: z.string().min(1).max(50),
+  beds: z.number().nonnegative().nullable().optional(),
+  baths: z.number().nonnegative().nullable().optional(),
+  sqft: z.number().int().nonnegative().nullable().optional(),
+  status: z.nativeEnum(UnitStatus),
+});
+
+export type UpdateUnitInput = z.infer<typeof updateUnitSchema>;

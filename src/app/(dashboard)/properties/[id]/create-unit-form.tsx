@@ -12,10 +12,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useHasPermission } from "@/lib/use-permissions";
+import { Permission } from "@/server/auth/permissions";
 import { createUnitAction } from "@/server/actions/properties";
 
 export function CreateUnitForm({ propertyId }: { propertyId: string }) {
+  const canCreateUnit = useHasPermission(Permission.UNITS_CREATE);
   const [state, action, pending] = useActionState(createUnitAction, null);
+
+  if (!canCreateUnit) return null;
 
   return (
     <Dialog>

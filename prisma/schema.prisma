@@ -203,6 +203,7 @@ model Listing {
   bathrooms      Float?
   amenities      Json          @default("[]")
   petPolicy      String?
+  metadata       Json          @default("{}")
   status         ListingStatus @default(DRAFT)
   // V2 syndication lifecycle
   publishedAt    DateTime?

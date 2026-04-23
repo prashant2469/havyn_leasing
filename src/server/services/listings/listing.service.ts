@@ -65,6 +65,7 @@ export async function createListing(ctx: OrgContext, input: CreateListingInput) 
       bathrooms: input.bathrooms ?? null,
       amenities: input.amenities ?? [],
       petPolicy: input.petPolicy || null,
+      metadata: input.metadata ?? {},
       status: input.status,
     },
   });
@@ -130,6 +131,12 @@ export async function updateListing(ctx: OrgContext, input: UpdateListingInput) 
       ...(input.petPolicy !== undefined && { petPolicy: input.petPolicy || null }),
       ...(input.status !== undefined && { status: input.status }),
       ...(input.publicSlug !== undefined && { publicSlug: input.publicSlug }),
+      ...(input.metadata !== undefined && {
+        metadata: {
+          ...((existing.metadata as Record<string, unknown> | null) ?? {}),
+          ...input.metadata,
+        },
+      }),
     },
   });
 

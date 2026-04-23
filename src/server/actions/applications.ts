@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 
 import { requireOrgContext } from "@/server/auth/context";
+import { Permission } from "@/server/auth/permissions";
+import { requirePermission } from "@/server/auth/require-permission";
 import { prisma } from "@/server/db/client";
 import {
   createApplication,
@@ -28,6 +30,7 @@ async function applicationLeadId(organizationId: string, applicationId: string) 
 export async function createApplicationAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LEADS_MANAGE);
     const raw = {
       leadId: formData.get("leadId"),
       payload: parseApplicationIntakeFromFormData(formData),
@@ -48,6 +51,7 @@ export async function createApplicationAction(_prev: unknown, formData: FormData
 export async function updateApplicationPipelineAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LEADS_MANAGE);
     const raw = {
       applicationId: formData.get("applicationId"),
       waitingOn: formData.get("waitingOn") ?? undefined,
@@ -68,6 +72,7 @@ export async function updateApplicationPipelineAction(_prev: unknown, formData: 
 export async function updateApplicationStatusAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LEADS_MANAGE);
     const raw = {
       applicationId: formData.get("applicationId"),
       status: formData.get("status"),

@@ -3,12 +3,15 @@
 import { revalidatePath } from "next/cache";
 
 import { requireOrgContext } from "@/server/auth/context";
+import { Permission } from "@/server/auth/permissions";
+import { requirePermission } from "@/server/auth/require-permission";
 import { createLeaseFromApplication } from "@/server/services/leases/lease.service";
 import { createLeaseFromApplicationSchema } from "@/server/validation/lease";
 
 export async function createLeaseFromApplicationAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LEASES_CREATE);
     const raw = {
       applicationId: formData.get("applicationId"),
       unitId: formData.get("unitId"),

@@ -1,4 +1,4 @@
-import { type LeadInboxStage, type LeadStatus, TourStatus } from "@prisma/client";
+import { type LeadInboxStage, type LeadStatus, NextActionType, TourStatus } from "@prisma/client";
 
 import { ActivityVerbs } from "@/domains/activity/verbs";
 import type { OrgContext } from "@/server/auth/context";
@@ -155,7 +155,10 @@ export async function getLeadById(ctx: OrgContext, leadId: string) {
     lead.listingId
       ? prisma.listing.findFirst({
           where: { id: lead.listingId, organizationId: ctx.organizationId },
-          include: { unit: { include: { property: true } } },
+          include: {
+            unit: { include: { property: true } },
+            organization: { select: { slug: true } },
+          },
         })
       : Promise.resolve(null),
   ]);
@@ -280,6 +283,45 @@ export async function updateLeadInboxStage(ctx: OrgContext, input: UpdateLeadInb
     entityId: updated.id,
     payloadBefore: { inboxStage: existing.inboxStage },
     payloadAfter: { inboxStage: updated.inboxStage },
+  });
+
+  return updated;
+}
+
+export async function advanceLeadPipeline(
+  ctx: OrgContext,
+  input: {
+    leadId: string;
+    status?: LeadStatus;
+    inboxStage?: LeadInboxStage;
+    nextActionAt?: Date | null;
+    nextActionType?: NextActionType | null;
+  },
+) {
+  const existing = await prisma.lead.findFirst({
+    where: { id: input.leadId, organizationId: ctx.organizationId },
+  });
+  if (!existing) throw new Error("Lead not found");
+
+  const updated = await prisma.lead.update({
+    where: { id: input.leadId },
+    data: {
+      ...(input.status ? { status: input.status } : {}),
+      ...(input.inboxStage ? { inboxStage: input.inboxStage } : {}),
+      ...(input.nextActionAt !== undefined ? { nextActionAt: input.nextActionAt } : {}),
+      ...(input.nextActionType !== undefined
+        ? { nextActionType: input.nextActionType ?? null }
+        : {}),
+    },
+  });
+
+  await logActivity({
+    ctx,
+    verb: ActivityVerbs.LEAD_INBOX_STAGE_CHANGED,
+    entityType: "Lead",
+    entityId: updated.id,
+    payloadBefore: { status: existing.status, inboxStage: existing.inboxStage },
+    payloadAfter: { status: updated.status, inboxStage: updated.inboxStage },
   });
 
   return updated;
