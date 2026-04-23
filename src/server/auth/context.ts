@@ -29,24 +29,6 @@ function logAuthContextWarning(message: string, data: Record<string, unknown>) {
   console.warn(`[auth-context] ${message}`, data);
 }
 
-async function persistActiveOrgCookieSafely(organizationId: string) {
-  try {
-    const jar = await cookies();
-    jar.set(ACTIVE_ORG_COOKIE, organizationId, {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 60 * 60 * 24 * 365,
-    });
-  } catch (error) {
-    logAuthContextWarning("unable to persist active org cookie in this render context", {
-      organizationId,
-      error: error instanceof Error ? error.message : "unknown_error",
-    });
-  }
-}
-
 async function ensureUserMembershipByEmail(email: string) {
   const normalizedEmail = email.trim().toLowerCase();
   const user =
@@ -162,10 +144,6 @@ export async function requireOrgContext(): Promise<OrgContext> {
   const picked =
     (fromCookie ? memberships.find((m) => m.organizationId === fromCookie) : null) ??
     memberships[0]!;
-
-  if (fromCookie !== picked.organizationId) {
-    await persistActiveOrgCookieSafely(picked.organizationId);
-  }
 
   return { organizationId: picked.organizationId, userId, role: picked.role };
 }

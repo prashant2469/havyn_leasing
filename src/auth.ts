@@ -27,7 +27,7 @@ export async function auth(): Promise<AppSession | null> {
 }
 
 export async function signOut(options?: { redirectTo?: string }) {
-  const supabase = await getSupabaseServerClient();
+  const supabase = await getSupabaseServerClient({ mutableCookies: true });
   await supabase.auth.signOut();
 
   if (options?.redirectTo) {

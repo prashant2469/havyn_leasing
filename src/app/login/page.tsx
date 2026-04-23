@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { cookies } from "next/headers";
 
 import { auth } from "@/auth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,18 +14,6 @@ export default async function LoginPage({
   const session = await auth();
   if (session?.user?.email) {
     redirect("/");
-  }
-
-  const jar = await cookies();
-  for (const cookieName of [
-    "authjs.session-token",
-    "__Secure-authjs.session-token",
-    "authjs.callback-url",
-    "__Secure-authjs.callback-url",
-    "authjs.csrf-token",
-    "__Host-authjs.csrf-token",
-  ]) {
-    jar.delete(cookieName);
   }
 
   const callbackUrl = normalizeAuthRedirect((await searchParams)?.callbackUrl);

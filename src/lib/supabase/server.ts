@@ -3,7 +3,8 @@ import { createServerClient } from "@supabase/ssr";
 
 import { getSupabaseAnonKey, getSupabaseUrl } from "./env";
 
-export async function getSupabaseServerClient() {
+export async function getSupabaseServerClient(options?: { mutableCookies?: boolean }) {
+  const mutableCookies = options?.mutableCookies ?? false;
   const jar = await cookies();
 
   return createServerClient(getSupabaseUrl(), getSupabaseAnonKey(), {
@@ -12,12 +13,9 @@ export async function getSupabaseServerClient() {
         return jar.getAll();
       },
       setAll(items) {
+        if (!mutableCookies) return;
         for (const item of items) {
-          try {
-            jar.set(item.name, item.value, item.options);
-          } catch {
-            // Ignore write failures in read-only render contexts.
-          }
+          jar.set(item.name, item.value, item.options);
         }
       },
     },
