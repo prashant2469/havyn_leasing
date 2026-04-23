@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+
 import { PageHeader } from "@/components/shell/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -19,7 +21,7 @@ import { TeamMemberActions } from "./team-member-actions";
 export default async function SettingsPage() {
   const ctx = await tryOrgContext();
   if (!ctx) {
-    return <PageHeader title="Settings" description="Configure dev auth on the dashboard home first." />;
+    redirect("/login");
   }
 
   const [org, memberships, residents] = await Promise.all([

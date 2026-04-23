@@ -1,4 +1,3 @@
-import { PrismaAdapter } from "@auth/prisma-adapter";
 import { MembershipRole } from "@prisma/client";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
@@ -52,7 +51,6 @@ async function ensureDefaultLoginUser() {
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
-  adapter: PrismaAdapter(prisma),
   providers: [
     ...(authConfig.providers ?? []),
     Credentials({
@@ -84,14 +82,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    async signIn({ user, profile }) {
-      const email = (user?.email ?? profile?.email)?.trim();
-      if (!email) return false;
-      const u = await prisma.user.findFirst({
-        where: { email: { equals: email, mode: "insensitive" } },
-        include: { memberships: { take: 1 } },
-      });
-      return !!(u && u.memberships.length > 0);
+    async signIn() {
+      return true;
     },
     async jwt({ token, user }) {
       if (user?.id) token.sub = user.id;

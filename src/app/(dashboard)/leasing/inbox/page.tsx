@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { buttonVariants } from "@/components/ui/button";
@@ -10,9 +11,7 @@ import { LeasingInboxClient } from "./leasing-inbox-client";
 export default async function LeasingInboxPage() {
   const ctx = await tryOrgContext();
   if (!ctx) {
-    return (
-      <PageHeader title="Leasing inbox" description="Configure dev auth on the dashboard home first." />
-    );
+    redirect("/login");
   }
 
   return (

@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+
 import { PageHeader } from "@/components/shell/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -15,7 +17,7 @@ import { listUnitsForOrg } from "@/server/services/properties/property.service";
 export default async function UnitsPage() {
   const ctx = await tryOrgContext();
   if (!ctx) {
-    return <PageHeader title="Units" description="Configure dev auth on the dashboard home first." />;
+    redirect("/login");
   }
 
   const units = await listUnitsForOrg(ctx);

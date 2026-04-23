@@ -62,6 +62,16 @@ export async function requireOrgContext(): Promise<OrgContext> {
     (fromCookie ? memberships.find((m) => m.organizationId === fromCookie) : null) ??
     memberships[0]!;
 
+  if (fromCookie !== picked.organizationId) {
+    jar.set(ACTIVE_ORG_COOKIE, picked.organizationId, {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 60 * 60 * 24 * 365,
+    });
+  }
+
   return { organizationId: picked.organizationId, userId, role: picked.role };
 }
 

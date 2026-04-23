@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -46,7 +47,7 @@ type AnalysisPageProps = {
 export default async function AnalysisPage({ searchParams }: AnalysisPageProps) {
   const ctx = await tryOrgContext();
   if (!ctx) {
-    return <PageHeader title="Analysis" description="Configure dev auth on the dashboard home first." />;
+    redirect("/login");
   }
 
   const resolvedSearchParams = await Promise.resolve(searchParams);

@@ -1,6 +1,5 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
-import { PageHeader } from "@/components/shell/page-header";
 import { tryOrgContext } from "@/server/auth/context";
 import { prisma } from "@/server/db/client";
 import { listAIActionsForLead } from "@/server/services/ai/ai-action.service";
@@ -23,7 +22,7 @@ export default async function LeadDetailPage({
   const { tab } = await searchParams;
   const ctx = await tryOrgContext();
   if (!ctx) {
-    return <PageHeader title="Lead" description="Configure dev auth on the dashboard home first." />;
+    redirect("/login");
   }
 
   const lead = await getLeadById(ctx, id);

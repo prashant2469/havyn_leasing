@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { buttonVariants } from "@/components/ui/button";
@@ -18,9 +19,7 @@ import { prisma } from "@/server/db/client";
 export default async function CommunicationsPage() {
   const ctx = await tryOrgContext();
   if (!ctx) {
-    return (
-      <PageHeader title="Communications" description="Configure dev auth on the dashboard home first." />
-    );
+    redirect("/login");
   }
 
   const conversations = await prisma.conversation.findMany({

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ChannelPublishState } from "@prisma/client";
+import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { buttonVariants } from "@/components/ui/button";
@@ -11,12 +12,7 @@ import { ListingsHub, type HubListingRow } from "./listings-hub";
 export default async function ListingsPage() {
   const ctx = await tryOrgContext();
   if (!ctx) {
-    return (
-      <PageHeader
-        title="Listings"
-        description="Configure dev auth on the dashboard home first."
-      />
-    );
+    redirect("/login");
   }
 
   const listings = await listListings(ctx);

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { buttonVariants } from "@/components/ui/button";
@@ -18,7 +18,7 @@ export default async function ListingDetailPage({
   const { id } = await params;
   const ctx = await tryOrgContext();
   if (!ctx) {
-    return <PageHeader title="Listing" description="Configure dev auth on the dashboard home first." />;
+    redirect("/login");
   }
 
   const listing = await getListingById(ctx, id);

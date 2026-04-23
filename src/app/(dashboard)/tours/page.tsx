@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { buttonVariants } from "@/components/ui/button";
@@ -19,7 +20,7 @@ import { listToursForOrg } from "@/server/services/leasing/tour.service";
 export default async function ToursPage() {
   const ctx = await tryOrgContext();
   if (!ctx) {
-    return <PageHeader title="Tours" description="Configure dev auth on the dashboard home first." />;
+    redirect("/login");
   }
 
   const tours = await listToursForOrg(ctx);

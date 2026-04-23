@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+
 import { PageHeader } from "@/components/shell/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -14,7 +16,7 @@ import { listRecentActivity } from "@/server/services/activity/activity.service"
 export default async function ActivityPage() {
   const ctx = await tryOrgContext();
   if (!ctx) {
-    return <PageHeader title="Activity" description="Configure dev auth on the dashboard home first." />;
+    redirect("/login");
   }
 
   const events = await listRecentActivity(ctx, 80);

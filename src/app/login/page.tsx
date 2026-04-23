@@ -27,12 +27,7 @@ export default async function LoginPage({
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="text-xl">Sign in to Havyn</CardTitle>
-          <CardDescription>
-            Use the default credentials below for deployment access:
-            <br />
-            <code className="bg-muted rounded px-1">havynrecruiting@gmail.com</code> /{" "}
-            <code className="bg-muted rounded px-1">test123</code>
-          </CardDescription>
+          <CardDescription>Access your leasing dashboard with your invited account.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <CredentialsLoginForm callbackUrl={callbackUrl} />

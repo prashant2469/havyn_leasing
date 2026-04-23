@@ -55,7 +55,7 @@ export function CredentialsLoginForm({ callbackUrl }: { callbackUrl?: string }) 
           type="email"
           autoComplete="email"
           required
-          defaultValue="havynrecruiting@gmail.com"
+          placeholder="you@company.com"
         />
       </div>
       <div className="space-y-1">
@@ -66,7 +66,7 @@ export function CredentialsLoginForm({ callbackUrl }: { callbackUrl?: string }) 
           type="password"
           autoComplete="current-password"
           required
-          defaultValue="test123"
+          placeholder="Enter your password"
         />
       </div>
       {errorMessage ? <p className="text-destructive text-xs">{errorMessage}</p> : null}

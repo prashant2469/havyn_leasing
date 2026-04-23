@@ -1,4 +1,5 @@
 import { auth } from "@/auth";
+import { redirect } from "next/navigation";
 import { AppSidebar } from "@/components/shell/app-sidebar";
 import { AppTopbar } from "@/components/shell/app-topbar";
 import { PermissionsProvider } from "@/components/providers/permissions-provider";
@@ -9,8 +10,12 @@ import { listRolePermissions } from "@/server/auth/permissions";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const ctx = await tryOrgContext();
   const session = await auth();
+  if (!session?.user?.id) {
+    redirect("/login");
+  }
+
+  const ctx = await tryOrgContext();
   const orgs = await listSessionMembershipOrgs();
   const org = ctx
     ? await prisma.organization.findUnique({

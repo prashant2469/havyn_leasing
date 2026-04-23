@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { buttonVariants } from "@/components/ui/button";
@@ -28,7 +28,7 @@ export default async function PropertyDetailPage({
   const { id } = await params;
   const ctx = await tryOrgContext();
   if (!ctx) {
-    return <PageHeader title="Property" description="Configure dev auth first." />;
+    redirect("/login");
   }
 
   const property = await getPropertyById(ctx, id);

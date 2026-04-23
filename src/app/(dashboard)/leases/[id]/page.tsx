@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { buttonVariants } from "@/components/ui/button";
@@ -17,7 +17,7 @@ export default async function LeaseDetailPage({
   const { id } = await params;
   const ctx = await tryOrgContext();
   if (!ctx) {
-    return <PageHeader title="Lease" description="Configure dev auth on the dashboard home first." />;
+    redirect("/login");
   }
 
   const lease = await getLeaseById(ctx, id);

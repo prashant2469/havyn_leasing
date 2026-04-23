@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { buttonVariants } from "@/components/ui/button";
@@ -13,9 +14,7 @@ import { LeadsTableClient } from "./leads-table-client";
 export default async function LeadsPage() {
   const ctx = await tryOrgContext();
   if (!ctx) {
-    return (
-      <PageHeader title="Leasing hub" description="Configure dev auth on the dashboard home first." />
-    );
+    redirect("/login");
   }
 
   const [properties, listings] = await Promise.all([

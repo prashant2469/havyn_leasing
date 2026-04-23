@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+
 import { PageHeader } from "@/components/shell/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { tryOrgContext } from "@/server/auth/context";
@@ -9,9 +11,7 @@ import { PropertiesTable } from "./properties-table";
 export default async function PropertiesPage() {
   const ctx = await tryOrgContext();
   if (!ctx) {
-    return (
-      <PageHeader title="Properties" description="Configure dev auth on the dashboard home first." />
-    );
+    redirect("/login");
   }
 
   const properties = await listProperties(ctx);

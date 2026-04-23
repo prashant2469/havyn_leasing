@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -21,9 +22,7 @@ import { listApplicationsForOrg } from "@/server/services/leasing/application.se
 export default async function ApplicationsPipelinePage() {
   const ctx = await tryOrgContext();
   if (!ctx) {
-    return (
-      <PageHeader title="Applications" description="Configure dev auth on the dashboard home first." />
-    );
+    redirect("/login");
   }
 
   const applications = await listApplicationsForOrg(ctx);
