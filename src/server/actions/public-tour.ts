@@ -4,6 +4,7 @@ import { ListingChannelType, MessageChannel, Prisma, TourStatus } from "@prisma/
 import { ZodError } from "zod";
 
 import { ActivityVerbs } from "@/domains/activity/verbs";
+import { PUBLIC_INTAKE_HONEYPOT_FIELD, isPublicIntakeHoneypotTripped } from "@/lib/public-intake-honeypot";
 import { getAutomationOrgContext } from "@/server/auth/automation-context";
 import { prisma } from "@/server/db/client";
 import { logActivity } from "@/server/services/activity/activity.service";
@@ -12,7 +13,9 @@ import { logOutboundAutomationMessage } from "@/server/services/communications/c
 import { transitionAfterTourBooked } from "@/server/services/leasing/stage-machine.service";
 import { getPublishedPublicListing } from "@/server/services/listings/public-listing.service";
 import { sendTransactionalEmail } from "@/server/services/outbound/resend.service";
-import { generateTourSlots } from "@/server/services/tours/slot-generator.service";
+import { upsertGoogleTourEventForOrganization } from "@/server/services/google/google-calendar.service";
+import { getBusyRangesForProperty } from "@/server/services/tours/availability.service";
+import { generateAvailableTourSlots } from "@/server/services/tours/slot-generator.service";
 import { scheduleTourReminders } from "@/server/services/tours/tour-reminders.service";
 import { publicBookTourSchema, publicScheduleTourSchema } from "@/server/validation/public-tour";
 
@@ -35,6 +38,10 @@ export async function submitPublicScheduleTourAction(
   formData: FormData,
 ): Promise<PublicTourActionState> {
   try {
+    if (isPublicIntakeHoneypotTripped(formData)) {
+      return { ok: true, message: "Thanks — we'll be in touch shortly." };
+    }
+
     const raw = {
       orgSlug: formData.get("orgSlug"),
       listingSlug: formData.get("listingSlug"),
@@ -47,13 +54,9 @@ export async function submitPublicScheduleTourAction(
       notes: formData.get("notes") || "",
       hasPets: formData.get("hasPets") || "",
       petsDescription: formData.get("petsDescription") || "",
-      website: formData.get("website") || "",
+      [PUBLIC_INTAKE_HONEYPOT_FIELD]: formData.get(PUBLIC_INTAKE_HONEYPOT_FIELD) || "",
     };
     const input = publicScheduleTourSchema.parse(raw);
-
-    if (input.website?.trim()) {
-      return { ok: true, message: "Thanks — we'll be in touch shortly." };
-    }
 
     const listing = await getPublishedPublicListing(input.orgSlug, input.listingSlug);
     if (!listing) {
@@ -131,6 +134,10 @@ export async function bookPublicTourSlotAction(
   formData: FormData,
 ): Promise<PublicTourActionState> {
   try {
+    if (isPublicIntakeHoneypotTripped(formData)) {
+      return { ok: true, message: "Your tour is confirmed." };
+    }
+
     const raw = {
       orgSlug: formData.get("orgSlug"),
       listingSlug: formData.get("listingSlug"),
@@ -138,13 +145,9 @@ export async function bookPublicTourSlotAction(
       lastName: formData.get("lastName"),
       email: formData.get("email"),
       slotIso: formData.get("slotIso"),
-      website: formData.get("website") || "",
+      [PUBLIC_INTAKE_HONEYPOT_FIELD]: formData.get(PUBLIC_INTAKE_HONEYPOT_FIELD) || "",
     };
     const input = publicBookTourSchema.parse(raw);
-
-    if (input.website?.trim()) {
-      return { ok: true, message: "Your tour is confirmed." };
-    }
 
     const listing = await getPublishedPublicListing(input.orgSlug, input.listingSlug);
     if (!listing) {
@@ -152,7 +155,15 @@ export async function bookPublicTourSlotAction(
     }
 
     const property = listing.unit.property;
-    const slots = generateTourSlots(property.showingSchedule, new Date(), 12);
+    const from = new Date();
+    const rangeEnd = new Date(from.getTime() + 21 * 24 * 60 * 60 * 1000);
+    const internalBusy = await getBusyRangesForProperty(
+      listing.organizationId,
+      property.id,
+      from,
+      rangeEnd,
+    );
+    const slots = generateAvailableTourSlots(property.showingSchedule, from, 12, internalBusy);
     const allowed = new Set(slots.map((d) => d.toISOString()));
     if (!allowed.has(input.slotIso)) {
       return { ok: false, message: "That time slot is no longer available. Please pick another." };
@@ -192,11 +203,20 @@ export async function bookPublicTourSlotAction(
       data: {
         leadId: lead.id,
         listingId: listing.id,
+        propertyId: listing.unit.property.id,
         scheduledAt,
         notes: "Booked via public listing",
         status: TourStatus.SCHEDULED,
       },
     });
+    await upsertGoogleTourEventForOrganization({
+      organizationId: listing.organizationId,
+      tourId: tour.id,
+      startAt: tour.scheduledAt,
+      durationMinutes: tour.durationMinutes,
+      summary: `Tour: ${lead.firstName} ${lead.lastName}`,
+      description: `Public booking for ${listing.title}`,
+    }).catch(() => null);
 
     await transitionAfterTourBooked(ctx, lead.id);
 

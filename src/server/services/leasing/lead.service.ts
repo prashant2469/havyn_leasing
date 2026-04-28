@@ -6,6 +6,7 @@ import { prisma } from "@/server/db/client";
 import { logActivity } from "@/server/services/activity/activity.service";
 import type {
   CreateLeadInput,
+  UpdateLeadContactInput,
   UpdateLeadInboxStageInput,
   UpdateLeadStatusInput,
 } from "@/server/validation/lead";
@@ -51,6 +52,9 @@ export async function listLeads(ctx: OrgContext) {
         select: { id: true },
         take: 1,
       },
+      _count: {
+        select: { recommendations: true },
+      },
     },
   });
   const map = await listingSummaryMap(
@@ -63,9 +67,10 @@ export async function listLeads(ctx: OrgContext) {
   }));
 }
 
-export async function listLeadsByInboxStage(ctx: OrgContext, stage: LeadInboxStage) {
+export async function listLeadsByInboxStages(ctx: OrgContext, stages: LeadInboxStage[]) {
+  if (stages.length === 0) return [];
   const leads = await prisma.lead.findMany({
-    where: { organizationId: ctx.organizationId, inboxStage: stage },
+    where: { organizationId: ctx.organizationId, inboxStage: { in: stages } },
     orderBy: { updatedAt: "desc" },
     include: {
       assignedTo: { select: { id: true, name: true, email: true } },
@@ -89,6 +94,9 @@ export async function listLeadsByInboxStage(ctx: OrgContext, stage: LeadInboxSta
         select: { id: true },
         take: 1,
       },
+      _count: {
+        select: { recommendations: true },
+      },
     },
   });
   const map = await listingSummaryMap(
@@ -99,6 +107,10 @@ export async function listLeadsByInboxStage(ctx: OrgContext, stage: LeadInboxSta
     ...l,
     listing: l.listingId ? (map.get(l.listingId) ?? null) : null,
   }));
+}
+
+export async function listLeadsByInboxStage(ctx: OrgContext, stage: LeadInboxStage) {
+  return listLeadsByInboxStages(ctx, [stage]);
 }
 
 /**
@@ -283,6 +295,44 @@ export async function updateLeadInboxStage(ctx: OrgContext, input: UpdateLeadInb
     entityId: updated.id,
     payloadBefore: { inboxStage: existing.inboxStage },
     payloadAfter: { inboxStage: updated.inboxStage },
+  });
+
+  return updated;
+}
+
+export async function updateLeadContact(ctx: OrgContext, input: UpdateLeadContactInput) {
+  const existing = await prisma.lead.findFirst({
+    where: { id: input.leadId, organizationId: ctx.organizationId },
+  });
+  if (!existing) throw new Error("Lead not found");
+
+  const updated = await prisma.lead.update({
+    where: { id: input.leadId },
+    data: {
+      firstName: input.firstName,
+      lastName: input.lastName,
+      email: input.email?.trim() ? input.email.trim() : null,
+      phone: input.phone?.trim() ? input.phone.trim() : null,
+    },
+  });
+
+  await logActivity({
+    ctx,
+    verb: "lead.contact_updated",
+    entityType: "Lead",
+    entityId: updated.id,
+    payloadBefore: {
+      firstName: existing.firstName,
+      lastName: existing.lastName,
+      email: existing.email,
+      phone: existing.phone,
+    },
+    payloadAfter: {
+      firstName: updated.firstName,
+      lastName: updated.lastName,
+      email: updated.email,
+      phone: updated.phone,
+    },
   });
 
   return updated;

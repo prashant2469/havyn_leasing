@@ -82,6 +82,7 @@ export async function tryLlmReplyDraft(input: {
   firstName: string;
   listingTitle?: string;
   heuristicBody: string;
+  propertyFactsBlock?: string;
 }): Promise<LlmDraftResult | null> {
   if (!aiEnabled()) return null;
   const model = process.env.OPENAI_COPILOT_MODEL ?? "gpt-4o-mini";
@@ -101,7 +102,7 @@ export async function tryLlmReplyDraft(input: {
           {
             role: "system",
             content:
-              "You draft concise, professional leasing replies as JSON: body (plain text, warm tone, ask at most two focused questions), contextNote (one line for the agent). No markdown.",
+              "You draft concise, professional leasing replies as JSON: body (plain text, warm tone, ask at most two focused questions), contextNote (one line for the agent). No markdown. If property facts are provided, treat them as authoritative and do not invent policies or fees.",
           },
           {
             role: "user",
@@ -109,6 +110,7 @@ export async function tryLlmReplyDraft(input: {
               prospectFirstName: input.firstName,
               listingTitle: input.listingTitle,
               heuristicDraft: input.heuristicBody,
+              propertyFacts: input.propertyFactsBlock ?? "",
               transcript: input.transcript.slice(0, 12000),
             }),
           },

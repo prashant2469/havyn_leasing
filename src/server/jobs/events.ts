@@ -28,6 +28,11 @@ export type LeadFollowUpDuePayload = {
   conversationId: string | null;
 };
 
+export type LeadQualificationsChangedPayload = {
+  organizationId: string;
+  leadId: string;
+};
+
 export async function enqueueLeadIngested(payload: LeadIngestedPayload) {
   await inngest.send({
     name: "lead/ingested",
@@ -55,5 +60,12 @@ export async function enqueueLeadFollowUpDue(payload: LeadFollowUpDuePayload, se
     name: "lead/follow_up_due",
     data: payload,
     ts: sendAt.getTime(),
+  });
+}
+
+export async function enqueueLeadQualificationsChanged(payload: LeadQualificationsChangedPayload) {
+  await inngest.send({
+    name: "lead/qualifications_changed",
+    data: payload,
   });
 }

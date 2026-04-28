@@ -18,7 +18,7 @@ export default async function LeasingInboxPage() {
     <div className="flex min-h-[calc(100vh-8rem)] flex-col gap-4">
       <PageHeader
         title="Leasing inbox"
-        description="Queues on the left, thread in the center, lead context on the right. Data from GET /api/leads?stage= and GET /api/leads/[id]."
+        description="Color-coded pipeline board with stage columns, urgency tags, and an in-context lead drawer."
         actions={
           <>
             <Link href="/analysis" className={cn(buttonVariants({ variant: "outline" }))}>

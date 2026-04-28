@@ -9,6 +9,20 @@ export const createPropertySchema = z.object({
   postalCode: z.string().min(1).max(20),
   country: z.string().min(2).max(2).default("US"),
   status: z.nativeEnum(PropertyStatus).optional(),
+  latitude: z.number().min(-90).max(90).optional().nullable(),
+  longitude: z.number().min(-180).max(180).optional().nullable(),
+  parkingType: z.string().max(80).optional().nullable(),
+  parkingSpaces: z.number().int().min(0).max(1000).optional().nullable(),
+  laundryType: z.string().max(80).optional().nullable(),
+  yearBuilt: z.number().int().min(1700).max(3000).optional().nullable(),
+  propertyType: z.string().max(80).optional().nullable(),
+  neighborhood: z.string().max(120).optional().nullable(),
+  transitNotes: z.string().max(4000).optional().nullable(),
+  schoolDistrict: z.string().max(200).optional().nullable(),
+  petRules: z.record(z.string(), z.any()).optional(),
+  amenities: z.array(z.string()).optional(),
+  utilityNotes: z.string().max(4000).optional().nullable(),
+  leaseTerms: z.record(z.string(), z.any()).optional(),
 });
 
 export type CreatePropertyInput = z.infer<typeof createPropertySchema>;

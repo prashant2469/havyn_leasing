@@ -29,25 +29,33 @@ function logAuthContextWarning(message: string, data: Record<string, unknown>) {
   console.warn(`[auth-context] ${message}`, data);
 }
 
-async function ensureUserMembershipByEmail(email: string) {
+async function ensureUserMembershipByEmail(email: string): Promise<string | null> {
   const normalizedEmail = email.trim().toLowerCase();
-  const user =
-    (await prisma.user.findFirst({
-      where: { email: { equals: normalizedEmail, mode: "insensitive" } },
-      select: { id: true },
-    })) ??
-    (await prisma.user.create({
-      data: {
-        email: normalizedEmail,
-        name: normalizedEmail.split("@")[0] ?? normalizedEmail,
-      },
-      select: { id: true },
-    }));
-
-  const membershipCount = await prisma.membership.count({
-    where: { userId: user.id },
+  const user = await prisma.user.findFirst({
+    where: { email: { equals: normalizedEmail, mode: "insensitive" } },
+    select: { id: true },
   });
-  if (membershipCount > 0) return user.id;
+
+  if (user) {
+    const membershipCount = await prisma.membership.count({
+      where: { userId: user.id },
+    });
+    if (membershipCount > 0) return user.id;
+    return null;
+  }
+
+  const organizationCount = await prisma.organization.count();
+  if (organizationCount > 0) {
+    return null;
+  }
+
+  const createdUser = await prisma.user.create({
+    data: {
+      email: normalizedEmail,
+      name: normalizedEmail.split("@")[0] ?? normalizedEmail,
+    },
+    select: { id: true },
+  });
 
   const org =
     (await prisma.organization.findFirst({
@@ -61,13 +69,13 @@ async function ensureUserMembershipByEmail(email: string) {
 
   await prisma.membership.create({
     data: {
-      userId: user.id,
+      userId: createdUser.id,
       organizationId: org.id,
       role: MembershipRole.OWNER,
     },
   });
 
-  return user.id;
+  return createdUser.id;
 }
 
 async function resolveSessionIdentityFromAuth(): Promise<ResolvedSessionIdentity> {

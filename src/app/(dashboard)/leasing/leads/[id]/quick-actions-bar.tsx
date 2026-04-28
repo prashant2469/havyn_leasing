@@ -10,12 +10,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { prospectListingPath } from "@/lib/public-url";
 import {
+  fastTrackLeaseAction,
   markContactedAction,
   quickApproveApplicationAction,
   quickScheduleTourAction,
 } from "@/server/actions/lead-pipeline";
-
-import { FastTrackWizard } from "./fast-track-wizard";
 
 type QuickActionsBarProps = {
   lead: {
@@ -36,7 +35,6 @@ type QuickActionsBarProps = {
     tours: { id: string }[];
   };
   application: { id: string; status: ApplicationStatus; lease: { id: string; status: string } | null } | null;
-  residents: { id: string; firstName: string; lastName: string; email: string | null; phone: string | null }[];
   units: { id: string; unitNumber: string; propertyName: string }[];
   onDone: () => void;
 };
@@ -44,7 +42,6 @@ type QuickActionsBarProps = {
 export function QuickActionsBar({
   lead,
   application,
-  residents,
   units,
   onDone,
 }: QuickActionsBarProps) {
@@ -58,27 +55,36 @@ export function QuickActionsBar({
   const canConvertToLease = Boolean(application && application.status === ApplicationStatus.APPROVED && !hasLease);
 
   const [showTourForm, setShowTourForm] = useState(false);
+  const [showLeaseForm, setShowLeaseForm] = useState(false);
   const [tourScheduledAt, setTourScheduledAt] = useState("");
   const [tourNotes, setTourNotes] = useState("");
+  const [leaseUnitId, setLeaseUnitId] = useState(lead.primaryUnitId ?? lead.listing?.unit.id ?? "");
+  const today = new Date().toISOString().slice(0, 10);
+  const [leaseStartDate, setLeaseStartDate] = useState(today);
+  const [leaseEndDate, setLeaseEndDate] = useState("");
+  const [leaseRentAmount, setLeaseRentAmount] = useState(lead.listing?.monthlyRent ?? "");
+  const [leaseDepositAmount, setLeaseDepositAmount] = useState(lead.listing?.monthlyRent ?? "");
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
 
   const [markState, markAction, markPending] = useActionState(markContactedAction, null);
   const [tourState, tourAction, tourPending] = useActionState(quickScheduleTourAction, null);
   const [approveState, approveAction, approvePending] = useActionState(quickApproveApplicationAction, null);
+  const [leaseState, leaseAction, leasePending] = useActionState(fastTrackLeaseAction, null);
 
   const latestError = useMemo(
     () =>
       (markState && !markState.ok ? markState.message : null) ??
       (tourState && !tourState.ok ? tourState.message : null) ??
-      (approveState && !approveState.ok ? approveState.message : null),
-    [approveState, markState, tourState],
+      (approveState && !approveState.ok ? approveState.message : null) ??
+      (leaseState && !leaseState.ok ? leaseState.message : null),
+    [approveState, leaseState, markState, tourState],
   );
 
   useEffect(() => {
-    if (markState?.ok || tourState?.ok || approveState?.ok) {
+    if (markState?.ok || tourState?.ok || approveState?.ok || leaseState?.ok) {
       onDone();
     }
-  }, [approveState?.ok, markState?.ok, onDone, tourState?.ok]);
+  }, [approveState?.ok, leaseState?.ok, markState?.ok, onDone, tourState?.ok]);
 
   const applicationPath =
     lead.listing?.publicSlug && lead.listing.organizationSlug
@@ -154,13 +160,9 @@ export function QuickActionsBar({
           ) : null}
 
           {canConvertToLease ? (
-            <FastTrackWizard
-              lead={lead}
-              application={application}
-              residents={residents}
-              units={units}
-              onDone={() => onDone()}
-            />
+            <Button type="button" size="sm" onClick={() => setShowLeaseForm((s) => !s)}>
+              {showLeaseForm ? "Hide lease form" : "Convert to lease"}
+            </Button>
           ) : null}
         </div>
 
@@ -192,6 +194,56 @@ export function QuickActionsBar({
             <div className="md:col-span-4">
               <Button type="submit" size="sm" disabled={tourPending}>
                 {tourPending ? "Scheduling..." : "Save tour"}
+              </Button>
+            </div>
+          </form>
+        ) : null}
+
+        {showLeaseForm && canConvertToLease ? (
+          <form action={leaseAction} className="grid gap-3 rounded-md border p-3 md:grid-cols-4">
+            <input type="hidden" name="leadId" value={lead.id} />
+            {application?.id ? <input type="hidden" name="applicationId" value={application.id} /> : null}
+            <input type="hidden" name="residentFirstName" value={lead.firstName} />
+            <input type="hidden" name="residentLastName" value={lead.lastName} />
+            <input type="hidden" name="residentEmail" value={lead.email ?? ""} />
+            <input type="hidden" name="residentPhone" value={lead.phone ?? ""} />
+            <div className="space-y-1 md:col-span-2">
+              <Label htmlFor="qa-lease-unit">Unit</Label>
+              <select
+                id="qa-lease-unit"
+                name="unitId"
+                className="border-input bg-background focus-visible:ring-ring flex h-9 w-full rounded-md border px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-2"
+                value={leaseUnitId}
+                onChange={(e) => setLeaseUnitId(e.target.value)}
+                required
+              >
+                <option value="">Select unit</option>
+                {units.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.propertyName} · {u.unitNumber}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="qa-lease-start">Start</Label>
+              <Input id="qa-lease-start" name="startDate" type="date" value={leaseStartDate} onChange={(e) => setLeaseStartDate(e.target.value)} required />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="qa-lease-end">End</Label>
+              <Input id="qa-lease-end" name="endDate" type="date" value={leaseEndDate} onChange={(e) => setLeaseEndDate(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="qa-lease-rent">Rent</Label>
+              <Input id="qa-lease-rent" name="rentAmount" type="number" min={0} step="0.01" value={leaseRentAmount} onChange={(e) => setLeaseRentAmount(e.target.value)} required />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="qa-lease-deposit">Deposit</Label>
+              <Input id="qa-lease-deposit" name="depositAmount" type="number" min={0} step="0.01" value={leaseDepositAmount} onChange={(e) => setLeaseDepositAmount(e.target.value)} />
+            </div>
+            <div className="md:col-span-4">
+              <Button type="submit" size="sm" disabled={leasePending}>
+                {leasePending ? "Creating lease..." : "Create lease"}
               </Button>
             </div>
           </form>

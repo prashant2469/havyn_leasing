@@ -8,6 +8,8 @@ import { listActivityForEntity } from "@/server/services/activity/activity.servi
 import { listMessagesForLead } from "@/server/services/communications/conversation.service";
 import { getLeadById } from "@/server/services/leasing/lead.service";
 import { listResidents } from "@/server/services/residents/resident.service";
+import { getLeadTimeline } from "@/server/services/timeline/timeline.service";
+import { listRecommendationsForLead } from "@/server/services/recommendations/recommendation.service";
 
 import { LeadWorkspace } from "./lead-workspace";
 
@@ -28,7 +30,7 @@ export default async function LeadDetailPage({
   const lead = await getLeadById(ctx, id);
   if (!lead) notFound();
 
-  const [convo, activities, aiActions, residents, properties] = await Promise.all([
+  const [convo, activities, aiActions, residents, properties, timeline, recommendations] = await Promise.all([
     listMessagesForLead(ctx, id),
     listActivityForEntity(ctx, "Lead", id),
     listAIActionsForLead(ctx, id),
@@ -38,6 +40,8 @@ export default async function LeadDetailPage({
       orderBy: { name: "asc" },
       include: { units: { orderBy: { unitNumber: "asc" } } },
     }),
+    getLeadTimeline(ctx, id),
+    listRecommendationsForLead(ctx, id),
   ]);
 
   let copilotContext = null;
@@ -53,6 +57,8 @@ export default async function LeadDetailPage({
       conversation={convo ? JSON.parse(JSON.stringify(convo)) : null}
       activities={JSON.parse(JSON.stringify(activities))}
       aiActions={JSON.parse(JSON.stringify(aiActions))}
+      timeline={JSON.parse(JSON.stringify(timeline))}
+      recommendations={JSON.parse(JSON.stringify(recommendations))}
       copilotContext={copilotContext ? JSON.parse(JSON.stringify(copilotContext)) : null}
       residents={JSON.parse(JSON.stringify(residents))}
       properties={JSON.parse(JSON.stringify(properties))}
@@ -61,6 +67,7 @@ export default async function LeadDetailPage({
         tab === "qualification" ||
         tab === "tours" ||
         tab === "application" ||
+        tab === "timeline" ||
         tab === "communications" ||
         tab === "activity" ||
         tab === "copilot"

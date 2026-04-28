@@ -25,6 +25,7 @@ export default async function LeasingWorkspacePage() {
   const [
     leadCount,
     activeQueueCount,
+    newPipelineCount,
     overdueNextActionCount,
     openApplicationsCount,
     upcomingToursCount,
@@ -44,6 +45,12 @@ export default async function LeasingWorkspacePage() {
             LeadInboxStage.NEEDS_HUMAN_REVIEW,
           ],
         },
+      },
+    }),
+    prisma.lead.count({
+      where: {
+        organizationId: ctx.organizationId,
+        inboxStage: { in: [LeadInboxStage.NEW_INQUIRY, LeadInboxStage.NEW_LEADS] },
       },
     }),
     prisma.lead.count({
@@ -80,7 +87,7 @@ export default async function LeasingWorkspacePage() {
       title: "Inbox",
       href: "/leasing/inbox",
       value: prettyInt(activeQueueCount),
-      description: `${prettyInt(noFirstReplyCount)} leads without first response`,
+      description: `${prettyInt(newPipelineCount)} new (no org message yet) · ${prettyInt(noFirstReplyCount)} with no first outbound message`,
       action: "Open inbox",
     },
     {

@@ -15,10 +15,12 @@ import {
 } from "@/components/ui/table";
 import { tryOrgContext } from "@/server/auth/context";
 import { getPropertyById } from "@/server/services/properties/property.service";
+import { listFactsForProperty } from "@/server/services/properties/property-fact.service";
 
 import { CreateUnitForm } from "./create-unit-form";
 import { EditPropertyForm } from "./edit-property-form";
 import { EditUnitForm } from "./edit-unit-form";
+import { PropertyKnowledgeBaseCard } from "./property-knowledge-base-card";
 
 export default async function PropertyDetailPage({
   params,
@@ -33,6 +35,7 @@ export default async function PropertyDetailPage({
 
   const property = await getPropertyById(ctx, id);
   if (!property) notFound();
+  const facts = await listFactsForProperty(ctx, property.id);
 
   return (
     <div className="space-y-8">
@@ -118,6 +121,12 @@ export default async function PropertyDetailPage({
           </Table>
         </CardContent>
       </Card>
+
+      <PropertyKnowledgeBaseCard
+        propertyId={property.id}
+        units={property.units.map((u) => ({ id: u.id, unitNumber: u.unitNumber }))}
+        facts={facts}
+      />
     </div>
   );
 }

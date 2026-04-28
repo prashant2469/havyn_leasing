@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { Prisma } from "@prisma/client";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,12 +14,19 @@ import {
 import { tryOrgContext } from "@/server/auth/context";
 import { Permission, hasPermission } from "@/server/auth/permissions";
 import { prisma } from "@/server/db/client";
+import { listGoogleCalendars } from "@/server/services/google/google-calendar.service";
 
 import { CreateResidentForm } from "./create-resident-form";
 import { InviteTeamMemberForm } from "./invite-team-member-form";
 import { TeamMemberActions } from "./team-member-actions";
+import { GoogleCalendarSettingsCard } from "./google-calendar-settings-card";
 
-export default async function SettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ googleCalendar?: string }>;
+}) {
+  const { googleCalendar } = await searchParams;
   const ctx = await tryOrgContext();
   if (!ctx) {
     redirect("/login");
@@ -36,6 +44,31 @@ export default async function SettingsPage() {
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
     }),
   ]);
+  let googleConnection: { calendarId: string } | null = null;
+  let calendars: Array<{ id: string; summary: string; primary?: boolean }> = [];
+  let googleCalendarUnavailable = false;
+  let googleCalendarError: string | null = null;
+  try {
+    googleConnection = await prisma.googleCalendarConnection.findUnique({
+      where: {
+        organizationId_userId: { organizationId: ctx.organizationId, userId: ctx.userId },
+      },
+      select: { calendarId: true },
+    });
+    calendars = googleConnection ? await listGoogleCalendars(ctx.organizationId, ctx.userId) : [];
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2021"
+    ) {
+      googleCalendarUnavailable = true;
+    } else if (error instanceof Error) {
+      googleCalendarError = error.message;
+    } else {
+      googleCalendarError = "Google Calendar request failed.";
+    }
+  }
+  const connectUrl = "/api/settings/google-calendar/connect";
   const canInvite = hasPermission(ctx.role, Permission.TEAM_INVITE);
   const canManageRoles = hasPermission(ctx.role, Permission.TEAM_MANAGE_ROLES);
   const canEditSettings = hasPermission(ctx.role, Permission.SETTINGS_EDIT);
@@ -133,6 +166,26 @@ export default async function SettingsPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <GoogleCalendarSettingsCard
+        connected={!googleCalendarUnavailable && Boolean(googleConnection)}
+        connectUrl={connectUrl}
+        selectedCalendarId={googleConnection?.calendarId ?? null}
+        calendars={calendars}
+        unavailableReason={
+          googleCalendarUnavailable
+            ? "Google Calendar setup pending: run database migration first (table not found)."
+            : googleCalendarError
+              ? `Google Calendar error: ${googleCalendarError}`
+            : googleCalendar === "missing_env"
+              ? "Google OAuth is not configured yet. Add GOOGLE_CALENDAR_CLIENT_ID and GOOGLE_CALENDAR_CLIENT_SECRET to your environment."
+              : googleCalendar === "connect_failed"
+                ? "Could not start Google OAuth. Please retry and check server logs."
+                : googleCalendar === "error"
+                  ? "Google OAuth failed. Please retry and confirm callback URL and OAuth app settings."
+            : null
+        }
+      />
     </div>
   );
 }

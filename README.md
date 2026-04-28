@@ -1,6 +1,6 @@
 # Havyn Leasing
 
-Operational leasing platform built with Next.js App Router, Prisma, and NextAuth.
+Operational leasing platform built with Next.js App Router, Prisma, and Supabase Auth.
 
 ## Local Development
 
@@ -20,20 +20,9 @@ npm run dev
 ## Auth Model
 
 - Login supports:
-  - Default credentials: `havynrecruiting@gmail.com` / `test123`
-  - Google OAuth
-
-## Vercel Deployment Auth Checklist
-
-Set these environment variables in Vercel Project Settings:
-
-- `DATABASE_URL`
-- `AUTH_SECRET` (or `NEXTAUTH_SECRET`)
-- `AUTH_GOOGLE_ID` (optional)
-- `AUTH_GOOGLE_SECRET` (optional)
-
-Google OAuth must include this callback URL:
-
-- `https://<your-domain>/api/auth/callback/google`
-
-On first credentials login, the app ensures this default account has an organization membership automatically.
+  - Invited email/password accounts through Supabase
+  - Google OAuth through Supabase
+- Required env:
+  - `SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_URL`
+  - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  - `SUPABASE_SERVICE_ROLE_KEY` (for team invites and password setup emails)

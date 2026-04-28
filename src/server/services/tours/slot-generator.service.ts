@@ -12,6 +12,11 @@ export type ShowingScheduleJson = {
   blackouts?: { start: string; end: string }[];
 };
 
+export type BusyRange = {
+  start: Date;
+  end: Date;
+};
+
 function parseHm(s: string): { h: number; m: number } {
   const [h, m] = s.split(":").map((x) => parseInt(x, 10));
   return { h: h || 9, m: m || 0 };
@@ -26,6 +31,17 @@ function isBlackout(d: Date, blackouts: ShowingScheduleJson["blackouts"]): boole
     if (t >= start && t <= end) return true;
   }
   return false;
+}
+
+function overlapsBusyRange(slotStart: Date, slotDurationMinutes: number, busyRanges: BusyRange[]): boolean {
+  if (busyRanges.length === 0) return false;
+  const slotStartMs = slotStart.getTime();
+  const slotEndMs = addMinutes(slotStart, slotDurationMinutes).getTime();
+  return busyRanges.some((r) => {
+    const busyStart = r.start.getTime();
+    const busyEnd = r.end.getTime();
+    return slotStartMs < busyEnd && slotEndMs > busyStart;
+  });
 }
 
 /**
@@ -67,4 +83,21 @@ export function generateTourSlots(
   }
 
   return slots.slice(0, count);
+}
+
+/**
+ * Same as `generateTourSlots`, but removes any slot that overlaps a busy range.
+ * Busy ranges can come from Havyn Tour rows and/or external calendar freebusy data.
+ */
+export function generateAvailableTourSlots(
+  schedule: unknown,
+  from: Date,
+  count: number,
+  busyRanges: BusyRange[],
+): Date[] {
+  const s = (schedule && typeof schedule === "object" ? schedule : {}) as ShowingScheduleJson;
+  const duration = s.tourDurationMinutes ?? 30;
+  const candidates = generateTourSlots(schedule, from, Math.max(count * 4, count));
+  const available = candidates.filter((slot) => !overlapsBusyRange(slot, duration, busyRanges));
+  return available.slice(0, count);
 }

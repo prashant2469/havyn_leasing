@@ -8,7 +8,16 @@ import { enqueueLeadFollowUpDue } from "@/server/jobs/events";
 import { recordActivity } from "@/server/services/activity/activity.service";
 import { sendToProspect } from "@/server/services/outbound/dispatch.service";
 import { scheduleTourReminders } from "@/server/services/tours/tour-reminders.service";
-import type { CreateTourInput, UpdateTourStatusInput } from "@/server/validation/tour";
+import {
+  deleteGoogleTourEvent,
+  upsertGoogleTourEvent,
+} from "@/server/services/google/google-calendar.service";
+import type {
+  CancelTourInput,
+  CreateTourInput,
+  RescheduleTourInput,
+  UpdateTourStatusInput,
+} from "@/server/validation/tour";
 
 async function assertLeadInOrg(ctx: OrgContext, leadId: string) {
   const lead = await prisma.lead.findFirst({
@@ -20,22 +29,36 @@ async function assertLeadInOrg(ctx: OrgContext, leadId: string) {
 
 export async function createTour(ctx: OrgContext, input: CreateTourInput) {
   const lead = await assertLeadInOrg(ctx, input.leadId);
+  let listingPropertyId: string | null = null;
 
   if (input.listingId) {
     const listing = await prisma.listing.findFirst({
       where: { id: input.listingId, organizationId: ctx.organizationId },
+      select: { id: true, unit: { select: { propertyId: true } } },
     });
     if (!listing) throw new Error("Listing not found");
+    listingPropertyId = listing.unit.propertyId;
   }
 
   const tour = await prisma.tour.create({
     data: {
       leadId: input.leadId,
       listingId: input.listingId ?? lead.listingId ?? null,
+      propertyId: lead.propertyId ?? listingPropertyId ?? null,
       scheduledAt: input.scheduledAt,
       notes: input.notes || null,
     },
   });
+
+  await upsertGoogleTourEvent({
+    organizationId: ctx.organizationId,
+    userId: ctx.userId,
+    tourId: tour.id,
+    startAt: tour.scheduledAt,
+    durationMinutes: tour.durationMinutes,
+    summary: `Tour: ${lead.firstName} ${lead.lastName}`,
+    description: input.notes ? `Notes: ${input.notes}` : "Scheduled via Havyn",
+  }).catch(() => null);
 
   const conversation = await prisma.conversation.findFirst({
     where: { organizationId: ctx.organizationId, leadId: input.leadId },
@@ -93,6 +116,14 @@ export async function updateTourStatus(ctx: OrgContext, input: UpdateTourStatusI
       ...(input.notes !== undefined ? { notes: input.notes || null } : {}),
     },
   });
+
+  if (updated.status === TourStatus.CANCELLED && updated.googleEventId) {
+    await deleteGoogleTourEvent({
+      organizationId: ctx.organizationId,
+      userId: ctx.userId,
+      googleEventId: updated.googleEventId,
+    }).catch(() => undefined);
+  }
 
   await recordActivity({
     ctx,
@@ -154,6 +185,78 @@ export async function updateTourStatus(ctx: OrgContext, input: UpdateTourStatusI
       followUpAt,
     );
   }
+
+  return updated;
+}
+
+export async function rescheduleTour(ctx: OrgContext, input: RescheduleTourInput) {
+  const existing = await prisma.tour.findFirst({
+    where: { id: input.tourId, lead: { organizationId: ctx.organizationId } },
+    include: { lead: true },
+  });
+  if (!existing) throw new Error("Tour not found");
+
+  const updated = await prisma.tour.update({
+    where: { id: input.tourId },
+    data: {
+      scheduledAt: input.scheduledAt,
+      notes: input.notes || existing.notes,
+    },
+  });
+
+  await upsertGoogleTourEvent({
+    organizationId: ctx.organizationId,
+    userId: ctx.userId,
+    tourId: updated.id,
+    googleEventId: updated.googleEventId,
+    startAt: updated.scheduledAt,
+    durationMinutes: updated.durationMinutes,
+    summary: `Tour: ${existing.lead.firstName} ${existing.lead.lastName}`,
+    description: updated.notes ?? "Rescheduled via Havyn",
+  }).catch(() => null);
+
+  await recordActivity({
+    ctx,
+    verb: "tour.rescheduled",
+    entityType: "Tour",
+    entityId: updated.id,
+    payloadBefore: { scheduledAt: existing.scheduledAt },
+    payloadAfter: { scheduledAt: updated.scheduledAt },
+  });
+
+  return updated;
+}
+
+export async function cancelTour(ctx: OrgContext, input: CancelTourInput) {
+  const existing = await prisma.tour.findFirst({
+    where: { id: input.tourId, lead: { organizationId: ctx.organizationId } },
+  });
+  if (!existing) throw new Error("Tour not found");
+
+  const updated = await prisma.tour.update({
+    where: { id: input.tourId },
+    data: {
+      status: TourStatus.CANCELLED,
+      cancelledAt: new Date(),
+      cancelReason: input.reason || null,
+    },
+  });
+
+  if (updated.googleEventId) {
+    await deleteGoogleTourEvent({
+      organizationId: ctx.organizationId,
+      userId: ctx.userId,
+      googleEventId: updated.googleEventId,
+    }).catch(() => undefined);
+  }
+
+  await recordActivity({
+    ctx,
+    verb: "tour.cancelled",
+    entityType: "Tour",
+    entityId: updated.id,
+    metadata: { reason: input.reason || null },
+  });
 
   return updated;
 }

@@ -24,6 +24,14 @@ export default async function ToursPage() {
   }
 
   const tours = await listToursForOrg(ctx);
+  const upcoming = tours.filter((t) => t.status === "SCHEDULED");
+  const byDate = upcoming.reduce<Record<string, typeof upcoming>>((acc, t) => {
+    const key = new Date(t.scheduledAt).toISOString().slice(0, 10);
+    acc[key] = acc[key] ?? [];
+    acc[key].push(t);
+    return acc;
+  }, {});
+  const dateKeys = Object.keys(byDate).sort();
 
   return (
     <div className="space-y-8">
@@ -82,6 +90,48 @@ export default async function ToursPage() {
               )}
             </TableBody>
           </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Calendar view</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {dateKeys.length === 0 ? (
+            <p className="text-muted-foreground text-sm">No scheduled tours.</p>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {dateKeys.map((d) => (
+                <div key={d} className="rounded-md border p-3">
+                  <p className="mb-2 text-sm font-medium">
+                    {new Date(`${d}T00:00:00`).toLocaleDateString(undefined, {
+                      weekday: "short",
+                      month: "short",
+                      day: "numeric",
+                    })}
+                  </p>
+                  <ul className="space-y-2">
+                    {byDate[d]
+                      .sort((a, b) => +new Date(a.scheduledAt) - +new Date(b.scheduledAt))
+                      .map((t) => (
+                        <li key={t.id} className="text-sm">
+                          <p className="font-medium">
+                            {new Date(t.scheduledAt).toLocaleTimeString([], {
+                              hour: "numeric",
+                              minute: "2-digit",
+                            })}
+                          </p>
+                          <p className="text-muted-foreground">
+                            {t.lead.firstName} {t.lead.lastName}
+                          </p>
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

@@ -16,6 +16,7 @@ import {
   MessageChannel,
   NextActionType,
   QualificationAnswer,
+  RecommendationStatus,
   TourStatus,
 } from "@prisma/client";
 import Link from "next/link";
@@ -29,7 +30,9 @@ import { PriorityIndicator } from "@/components/ai/priority-indicator";
 import { QualificationSnapshot } from "@/components/ai/qualification-snapshot";
 import { ReplyDraftPanel } from "@/components/ai/reply-draft-panel";
 import { SuggestedActionCard } from "@/components/ai/suggested-action-card";
+import { RecommendationCard } from "@/components/recommendations/recommendation-card";
 import { PageHeader } from "@/components/shell/page-header";
+import { LeadTimeline } from "@/components/timeline/lead-timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -55,6 +58,7 @@ import {
 } from "@/domains/leasing/constants";
 import { APPLICATION_INTAKE_LABELS } from "@/domains/leasing/application-intake";
 import { channelTypeIcon, channelTypeLabel } from "@/domains/listings/constants";
+import type { TimelineEntry } from "@/domains/timeline/types";
 import {
   reviewAIActionAction,
 } from "@/server/actions/ai-actions";
@@ -63,12 +67,22 @@ import {
   updateApplicationPipelineAction,
   updateApplicationStatusAction,
 } from "@/server/actions/applications";
+import { generateRecommendationsAction } from "@/server/actions/recommendations";
 import { requestHumanHandoffAction } from "@/server/actions/handoff";
 import { createLeaseFromApplicationAction } from "@/server/actions/leases";
-import { updateLeadInboxStageAction, updateLeadStatusAction } from "@/server/actions/leads";
+import {
+  updateLeadContactAction,
+  updateLeadInboxStageAction,
+  updateLeadStatusAction,
+} from "@/server/actions/leads";
 import { logInboundPlaceholderAction, logOutboundMessageAction } from "@/server/actions/messages";
 import { upsertQualificationAction } from "@/server/actions/qualification";
-import { createTourAction, updateTourStatusAction } from "@/server/actions/tours";
+import {
+  cancelTourAction,
+  createTourAction,
+  rescheduleTourAction,
+  updateTourStatusAction,
+} from "@/server/actions/tours";
 
 import { QuickActionsBar } from "./quick-actions-bar";
 
@@ -226,6 +240,8 @@ export function LeadWorkspace({
   conversation,
   activities,
   aiActions,
+  timeline,
+  recommendations,
   copilotContext,
   residents,
   properties,
@@ -241,6 +257,7 @@ export function LeadWorkspace({
   } | null;
   activities: ActivityRow[];
   aiActions: AIActionRow[];
+  timeline: TimelineEntry[];
   copilotContext: CopilotContext | null;
   residents: { id: string; firstName: string; lastName: string; email: string | null; phone: string | null }[];
   properties: {
@@ -248,11 +265,27 @@ export function LeadWorkspace({
     name: string;
     units: { id: string; unitNumber: string }[];
   }[];
+  recommendations: Array<{
+    id: string;
+    leadId: string;
+    score: number;
+    status: RecommendationStatus;
+    listing: {
+      id: string;
+      title: string;
+      monthlyRent: string;
+      bedrooms: number | null;
+      bathrooms: number | null;
+      availableFrom: string | null;
+      unit: { unitNumber: string; property: { name: string } };
+    };
+  }>;
   initialTab?:
     | "overview"
     | "qualification"
     | "tours"
     | "application"
+    | "timeline"
     | "communications"
     | "activity"
     | "copilot";
@@ -319,7 +352,6 @@ export function LeadWorkspace({
           tours: lead.tours.map((tour) => ({ id: tour.id })),
         }}
         application={primaryApplication}
-        residents={residents}
         units={flatUnits}
         onDone={() => router.refresh()}
       />
@@ -330,6 +362,7 @@ export function LeadWorkspace({
           <TabsTrigger value="qualification">Qualification</TabsTrigger>
           <TabsTrigger value="tours">Tours</TabsTrigger>
           <TabsTrigger value="application">Application</TabsTrigger>
+          <TabsTrigger value="timeline">Timeline</TabsTrigger>
           <TabsTrigger value="communications">Communications</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
           <TabsTrigger value="copilot">Copilot</TabsTrigger>
@@ -341,10 +374,17 @@ export function LeadWorkspace({
               <CardHeader>
                 <CardTitle className="text-base">Contact</CardTitle>
               </CardHeader>
-              <CardContent className="text-muted-foreground space-y-1 text-sm">
-                <p>Email: {lead.email ?? "—"}</p>
-                <p>Phone: {lead.phone ?? "—"}</p>
-                <p>Source: {lead.source ?? "—"}</p>
+              <CardContent className="space-y-3 text-sm">
+                <LeadContactForm
+                  key={`${lead.id}-contact-${lead.firstName}-${lead.lastName}-${lead.email ?? ""}-${lead.phone ?? ""}`}
+                  leadId={lead.id}
+                  firstName={lead.firstName}
+                  lastName={lead.lastName}
+                  email={lead.email}
+                  phone={lead.phone}
+                  source={lead.source}
+                  onDone={() => router.refresh()}
+                />
               </CardContent>
             </Card>
 
@@ -428,6 +468,29 @@ export function LeadWorkspace({
               </CardHeader>
               <CardContent>
                 <HandoffForm leadId={leadId} onDone={() => router.refresh()} />
+              </CardContent>
+            </Card>
+            <Card className="lg:col-span-2">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="text-base">Property recommendations</CardTitle>
+                <GenerateRecommendationsForm leadId={leadId} onDone={() => router.refresh()} />
+              </CardHeader>
+              <CardContent>
+                {recommendations.length === 0 ? (
+                  <p className="text-muted-foreground text-sm">
+                    No recommendations yet. Generate them after qualifications are captured.
+                  </p>
+                ) : (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {recommendations.map((r: (typeof recommendations)[number]) => (
+                      <RecommendationCard
+                        key={r.id}
+                        recommendation={r}
+                        onDone={() => router.refresh()}
+                      />
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -527,12 +590,21 @@ export function LeadWorkspace({
                         <TableCell>{tourStatusLabel[t.status]}</TableCell>
                         <TableCell className="max-w-xs truncate">{t.notes ?? "—"}</TableCell>
                         <TableCell>
-                          <TourStatusForm
-                            key={`${t.id}-${t.status}`}
-                            tourId={t.id}
-                            defaultStatus={t.status}
-                            onDone={() => router.refresh()}
-                          />
+                          <div className="space-y-2">
+                            <TourStatusForm
+                              key={`${t.id}-${t.status}`}
+                              tourId={t.id}
+                              defaultStatus={t.status}
+                              onDone={() => router.refresh()}
+                            />
+                            <TourRescheduleForm
+                              key={`${t.id}-${t.scheduledAt}`}
+                              tourId={t.id}
+                              defaultScheduledAt={t.scheduledAt}
+                              onDone={() => router.refresh()}
+                            />
+                            <TourCancelForm tourId={t.id} onDone={() => router.refresh()} />
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
@@ -744,6 +816,17 @@ export function LeadWorkspace({
                   )}
                 </TableBody>
               </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="timeline">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Leasing timeline</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <LeadTimeline entries={timeline} />
             </CardContent>
           </Card>
         </TabsContent>
@@ -963,6 +1046,60 @@ function HandoffForm({ leadId, onDone }: { leadId: string; onDone: () => void })
   );
 }
 
+function LeadContactForm({
+  leadId,
+  firstName,
+  lastName,
+  email,
+  phone,
+  source,
+  onDone,
+}: {
+  leadId: string;
+  firstName: string;
+  lastName: string;
+  email: string | null;
+  phone: string | null;
+  source: string | null;
+  onDone: () => void;
+}) {
+  const [state, action, pending] = useActionState(updateLeadContactAction, null);
+  useEffect(() => {
+    if (state?.ok) onDone();
+  }, [state?.ok, onDone]);
+  return (
+    <form action={action} className="space-y-3">
+      <input type="hidden" name="leadId" value={leadId} />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="lead-firstName">First name</Label>
+          <Input id="lead-firstName" name="firstName" defaultValue={firstName} required />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="lead-lastName">Last name</Label>
+          <Input id="lead-lastName" name="lastName" defaultValue={lastName} required />
+        </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="lead-email">Email</Label>
+          <Input id="lead-email" name="email" defaultValue={email ?? ""} />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="lead-phone">Phone</Label>
+          <Input id="lead-phone" name="phone" defaultValue={phone ?? ""} />
+        </div>
+      </div>
+      <p className="text-muted-foreground text-xs">Source: {source ?? "—"}</p>
+      {state && !state.ok ? <p className="text-destructive text-sm">{state.message}</p> : null}
+      {state?.ok ? <p className="text-xs text-green-600">Saved.</p> : null}
+      <Button type="submit" size="sm" disabled={pending}>
+        {pending ? "Saving..." : "Save contact"}
+      </Button>
+    </form>
+  );
+}
+
 function QualificationUpsertForm({ leadId, onDone }: { leadId: string; onDone: () => void }) {
   const [state, action, pending] = useActionState(upsertQualificationAction, null);
   useEffect(() => {
@@ -1108,6 +1245,52 @@ function TourStatusForm({
       {state && !state.ok ? (
         <span className="text-destructive text-xs">{state.message}</span>
       ) : null}
+    </form>
+  );
+}
+
+function TourRescheduleForm({
+  tourId,
+  defaultScheduledAt,
+  onDone,
+}: {
+  tourId: string;
+  defaultScheduledAt: string;
+  onDone: () => void;
+}) {
+  const [state, action, pending] = useActionState(rescheduleTourAction, null);
+  useEffect(() => {
+    if (state?.ok) onDone();
+  }, [state?.ok, onDone]);
+  const dt = new Date(defaultScheduledAt);
+  const local = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(
+    dt.getDate(),
+  ).padStart(2, "0")}T${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
+  return (
+    <form action={action} className="flex flex-wrap items-end gap-2">
+      <input type="hidden" name="tourId" value={tourId} />
+      <Input name="scheduledAt" type="datetime-local" defaultValue={local} className="h-8 w-[180px]" />
+      <Button type="submit" size="sm" variant="outline" disabled={pending}>
+        Reschedule
+      </Button>
+      {state && !state.ok ? <span className="text-destructive text-xs">{state.message}</span> : null}
+    </form>
+  );
+}
+
+function TourCancelForm({ tourId, onDone }: { tourId: string; onDone: () => void }) {
+  const [state, action, pending] = useActionState(cancelTourAction, null);
+  useEffect(() => {
+    if (state?.ok) onDone();
+  }, [state?.ok, onDone]);
+  return (
+    <form action={action} className="flex items-end gap-2">
+      <input type="hidden" name="tourId" value={tourId} />
+      <Input name="reason" placeholder="Cancel reason" className="h-8 w-[180px]" />
+      <Button type="submit" size="sm" variant="ghost" disabled={pending}>
+        Cancel
+      </Button>
+      {state && !state.ok ? <span className="text-destructive text-xs">{state.message}</span> : null}
     </form>
   );
 }
@@ -1369,6 +1552,23 @@ function InboundForm({ leadId, onDone }: { leadId: string; onDone: () => void })
       <Button type="submit" size="sm" variant="secondary" disabled={pending}>
         Log inbound
       </Button>
+    </form>
+  );
+}
+
+function GenerateRecommendationsForm({ leadId, onDone }: { leadId: string; onDone: () => void }) {
+  const [state, action, pending] = useActionState(generateRecommendationsAction, null);
+  useEffect(() => {
+    if (state?.ok) onDone();
+  }, [state?.ok, onDone]);
+
+  return (
+    <form action={action} className="flex items-center gap-2">
+      <input type="hidden" name="leadId" value={leadId} />
+      <Button type="submit" size="sm" variant="secondary" disabled={pending}>
+        {pending ? "Refreshing..." : "Refresh matches"}
+      </Button>
+      {state && !state.ok ? <span className="text-destructive text-xs">{state.message}</span> : null}
     </form>
   );
 }

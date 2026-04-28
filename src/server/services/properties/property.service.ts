@@ -50,6 +50,20 @@ export async function createProperty(ctx: OrgContext, input: CreatePropertyInput
       postalCode: input.postalCode,
       country: input.country ?? "US",
       status: input.status,
+      latitude: input.latitude ?? null,
+      longitude: input.longitude ?? null,
+      parkingType: input.parkingType ?? null,
+      parkingSpaces: input.parkingSpaces ?? null,
+      laundryType: input.laundryType ?? null,
+      yearBuilt: input.yearBuilt ?? null,
+      propertyType: input.propertyType ?? null,
+      neighborhood: input.neighborhood ?? null,
+      transitNotes: input.transitNotes ?? null,
+      schoolDistrict: input.schoolDistrict ?? null,
+      petRules: (input.petRules ?? {}) as Prisma.InputJsonValue,
+      amenities: (input.amenities ?? []) as Prisma.InputJsonValue,
+      utilityNotes: input.utilityNotes ?? null,
+      leaseTerms: (input.leaseTerms ?? {}) as Prisma.InputJsonValue,
     },
   });
 
@@ -107,6 +121,35 @@ export async function updateProperty(ctx: OrgContext, input: UpdatePropertyInput
       postalCode: input.postalCode,
       country: input.country,
       status: input.status,
+      latitude: input.latitude ?? null,
+      longitude: input.longitude ?? null,
+      parkingType: input.parkingType ?? null,
+      parkingSpaces: input.parkingSpaces ?? null,
+      laundryType: input.laundryType ?? null,
+      yearBuilt: input.yearBuilt ?? null,
+      propertyType: input.propertyType ?? null,
+      neighborhood: input.neighborhood ?? null,
+      transitNotes: input.transitNotes ?? null,
+      schoolDistrict: input.schoolDistrict ?? null,
+      petRules:
+        input.petRules !== undefined
+          ? (input.petRules as Prisma.InputJsonValue)
+          : existing.petRules === null
+            ? Prisma.JsonNull
+            : (existing.petRules as Prisma.InputJsonValue),
+      amenities:
+        input.amenities !== undefined
+          ? (input.amenities as Prisma.InputJsonValue)
+          : existing.amenities === null
+            ? Prisma.JsonNull
+            : (existing.amenities as Prisma.InputJsonValue),
+      utilityNotes: input.utilityNotes ?? null,
+      leaseTerms:
+        input.leaseTerms !== undefined
+          ? (input.leaseTerms as Prisma.InputJsonValue)
+          : existing.leaseTerms === null
+            ? Prisma.JsonNull
+            : (existing.leaseTerms as Prisma.InputJsonValue),
       showingSchedule:
         input.showingSchedule !== undefined
           ? (input.showingSchedule as Prisma.InputJsonValue)

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { requireOrgContext } from "@/server/auth/context";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { Permission } from "@/server/auth/permissions";
 import { requirePermission } from "@/server/auth/require-permission";
 import { prisma } from "@/server/db/client";
@@ -70,6 +71,15 @@ export async function inviteTeamMemberAction(_prev: unknown, formData: FormData)
       select: { id: true },
     });
 
+    const supabaseAdmin = getSupabaseAdminClient();
+    const { error: createAuthUserError } = await supabaseAdmin.auth.admin.createUser({
+      email: input.email,
+      email_confirm: true,
+    });
+    if (createAuthUserError && !createAuthUserError.message.toLowerCase().includes("already")) {
+      throw new Error(createAuthUserError.message);
+    }
+
     const user =
       existingUser ??
       (await prisma.user.create({
@@ -102,8 +112,19 @@ export async function inviteTeamMemberAction(_prev: unknown, formData: FormData)
       },
     });
 
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim() || "http://localhost:3000";
+    const { error: resetError } = await supabaseAdmin.auth.resetPasswordForEmail(input.email, {
+      redirectTo: `${appUrl}/login/reset-password`,
+    });
+    if (resetError) {
+      throw new Error(resetError.message);
+    }
+
     revalidatePath("/settings");
-    return { ok: true as const };
+    return {
+      ok: true as const,
+      message: "Invite sent. The user will receive a password setup email.",
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to invite member";
     return { ok: false as const, message };

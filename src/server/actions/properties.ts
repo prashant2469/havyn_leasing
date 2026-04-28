@@ -20,6 +20,20 @@ import {
   updateUnitSchema,
 } from "@/server/validation/property";
 
+function toNumOrNull(v: FormDataEntryValue | null): number | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function toStrOrNull(v: FormDataEntryValue | null): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s ? s : null;
+}
+
 export async function createPropertyAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
@@ -31,6 +45,33 @@ export async function createPropertyAction(_prev: unknown, formData: FormData) {
       state: formData.get("state"),
       postalCode: formData.get("postalCode"),
       country: formData.get("country") || "US",
+      latitude: toNumOrNull(formData.get("latitude")),
+      longitude: toNumOrNull(formData.get("longitude")),
+      parkingType: toStrOrNull(formData.get("parkingType")),
+      parkingSpaces: toNumOrNull(formData.get("parkingSpaces")),
+      laundryType: toStrOrNull(formData.get("laundryType")),
+      yearBuilt: toNumOrNull(formData.get("yearBuilt")),
+      propertyType: toStrOrNull(formData.get("propertyType")),
+      neighborhood: toStrOrNull(formData.get("neighborhood")),
+      transitNotes: toStrOrNull(formData.get("transitNotes")),
+      schoolDistrict: toStrOrNull(formData.get("schoolDistrict")),
+      utilityNotes: toStrOrNull(formData.get("utilityNotes")),
+      amenities: String(formData.get("amenitiesCsv") ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+      petRules: {
+        dogs: String(formData.get("petDogsAllowed") ?? "") === "true",
+        cats: String(formData.get("petCatsAllowed") ?? "") === "true",
+        maxWeight: toNumOrNull(formData.get("petMaxWeight")),
+        deposit: toNumOrNull(formData.get("petDeposit")),
+        monthlyFee: toNumOrNull(formData.get("petMonthlyFee")),
+      },
+      leaseTerms: {
+        minMonths: toNumOrNull(formData.get("leaseMinMonths")),
+        maxMonths: toNumOrNull(formData.get("leaseMaxMonths")),
+        preferredMonths: toNumOrNull(formData.get("leasePreferredMonths")),
+      },
     };
     const input = createPropertySchema.parse(raw);
     await createProperty(ctx, input);
@@ -69,11 +110,37 @@ export async function updatePropertyAction(_prev: unknown, formData: FormData) {
   try {
     const ctx = await requireOrgContext();
     await requirePermission(ctx, Permission.PROPERTIES_EDIT);
-    let showingSchedule: Record<string, unknown> | undefined = undefined;
-    const showingScheduleRaw = String(formData.get("showingScheduleJson") ?? "").trim();
-    if (showingScheduleRaw) {
-      showingSchedule = JSON.parse(showingScheduleRaw) as Record<string, unknown>;
+    const weekdaysSelected = formData
+      .getAll("scheduleWeekdays")
+      .map((w) => Number(String(w)))
+      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
+    const weekdaysCsv = String(formData.get("scheduleWeekdaysCsv") ?? "").trim();
+    const scheduleStart = String(formData.get("scheduleStart") ?? "").trim() || "10:00";
+    const scheduleEnd = String(formData.get("scheduleEnd") ?? "").trim() || "16:00";
+    const duration = toNumOrNull(formData.get("tourDurationMinutes")) ?? 30;
+    const weekdays = (weekdaysSelected.length > 0
+      ? weekdaysSelected
+      : weekdaysCsv
+      .split(",")
+      .map((w) => Number(w.trim()))
+      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6));
+    let blackouts: Array<{ start: string; end: string }> = [];
+    const blackoutsRaw = String(formData.get("scheduleBlackoutsJson") ?? "").trim();
+    if (blackoutsRaw) {
+      const parsed = JSON.parse(blackoutsRaw) as Array<{ start: string; end: string }>;
+      if (Array.isArray(parsed)) blackouts = parsed;
     }
+    const showingSchedule: Record<string, unknown> = {
+      weekdayWindows: [
+        {
+          weekdays: weekdays.length > 0 ? weekdays : [1, 2, 3, 4, 5],
+          start: scheduleStart,
+          end: scheduleEnd,
+        },
+      ],
+      tourDurationMinutes: duration,
+      blackouts,
+    };
     const input = updatePropertySchema.parse({
       id: formData.get("id"),
       name: formData.get("name"),
@@ -83,6 +150,33 @@ export async function updatePropertyAction(_prev: unknown, formData: FormData) {
       postalCode: formData.get("postalCode"),
       country: formData.get("country") || "US",
       status: formData.get("status"),
+      latitude: toNumOrNull(formData.get("latitude")),
+      longitude: toNumOrNull(formData.get("longitude")),
+      parkingType: toStrOrNull(formData.get("parkingType")),
+      parkingSpaces: toNumOrNull(formData.get("parkingSpaces")),
+      laundryType: toStrOrNull(formData.get("laundryType")),
+      yearBuilt: toNumOrNull(formData.get("yearBuilt")),
+      propertyType: toStrOrNull(formData.get("propertyType")),
+      neighborhood: toStrOrNull(formData.get("neighborhood")),
+      transitNotes: toStrOrNull(formData.get("transitNotes")),
+      schoolDistrict: toStrOrNull(formData.get("schoolDistrict")),
+      utilityNotes: toStrOrNull(formData.get("utilityNotes")),
+      amenities: String(formData.get("amenitiesCsv") ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+      petRules: {
+        dogs: String(formData.get("petDogsAllowed") ?? "") === "true",
+        cats: String(formData.get("petCatsAllowed") ?? "") === "true",
+        maxWeight: toNumOrNull(formData.get("petMaxWeight")),
+        deposit: toNumOrNull(formData.get("petDeposit")),
+        monthlyFee: toNumOrNull(formData.get("petMonthlyFee")),
+      },
+      leaseTerms: {
+        minMonths: toNumOrNull(formData.get("leaseMinMonths")),
+        maxMonths: toNumOrNull(formData.get("leaseMaxMonths")),
+        preferredMonths: toNumOrNull(formData.get("leasePreferredMonths")),
+      },
       showingSchedule,
     });
     await updateProperty(ctx, input);

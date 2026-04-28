@@ -7,11 +7,13 @@ import { Permission } from "@/server/auth/permissions";
 import { requirePermission } from "@/server/auth/require-permission";
 import {
   createLead,
+  updateLeadContact,
   updateLeadInboxStage,
   updateLeadStatus,
 } from "@/server/services/leasing/lead.service";
 import {
   createLeadSchema,
+  updateLeadContactSchema,
   updateLeadInboxStageSchema,
   updateLeadStatusSchema,
 } from "@/server/validation/lead";
@@ -84,6 +86,28 @@ export async function updateLeadInboxStageAction(_prev: unknown, formData: FormD
     return { ok: true as const };
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to move lead";
+    return { ok: false as const, message };
+  }
+}
+
+export async function updateLeadContactAction(_prev: unknown, formData: FormData) {
+  try {
+    const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LEADS_MANAGE);
+    const input = updateLeadContactSchema.parse({
+      leadId: formData.get("leadId"),
+      firstName: formData.get("firstName"),
+      lastName: formData.get("lastName"),
+      email: formData.get("email") || "",
+      phone: formData.get("phone") || "",
+    });
+    await updateLeadContact(ctx, input);
+    revalidatePath("/leasing/inbox");
+    revalidatePath("/leasing/leads");
+    revalidatePath(`/leasing/leads/${input.leadId}`);
+    return { ok: true as const };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Failed to update lead contact";
     return { ok: false as const, message };
   }
 }

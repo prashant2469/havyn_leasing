@@ -16,17 +16,18 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
 
   const ctx = await tryOrgContext();
+  if (!ctx) {
+    redirect("/no-access");
+  }
   const orgs = await listSessionMembershipOrgs();
-  const org = ctx
-    ? await prisma.organization.findUnique({
-        where: { id: ctx.organizationId },
-        select: { name: true },
-      })
-    : null;
-  const permissions = ctx ? listRolePermissions(ctx.role) : [];
+  const org = await prisma.organization.findUnique({
+    where: { id: ctx.organizationId },
+    select: { name: true },
+  });
+  const permissions = listRolePermissions(ctx.role);
 
   return (
-    <PermissionsProvider value={{ role: ctx?.role ?? null, permissions }}>
+    <PermissionsProvider value={{ role: ctx.role, permissions }}>
       <QueryProvider>
         <SidebarProvider>
           <AppSidebar />
@@ -34,7 +35,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <AppTopbar
               subtitle={org?.name}
               orgs={orgs}
-              currentOrgId={ctx?.organizationId}
+              currentOrgId={ctx.organizationId}
               showSignOut={!!session?.user}
             />
             <main className="flex flex-1 flex-col gap-6 p-4 md:p-6">{children}</main>

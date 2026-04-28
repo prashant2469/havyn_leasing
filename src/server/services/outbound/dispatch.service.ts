@@ -14,12 +14,26 @@ import { hasOpenEscalationFlags } from "@/server/services/escalation/escalation-
 import { getNextQualificationPrompt } from "@/server/services/leasing/guided-qualification.service";
 import { getQualificationCompleteness } from "@/server/services/leasing/qualification-score.service";
 import { transitionAfterFirstOutreach } from "@/server/services/leasing/stage-machine.service";
-import { generateTourSlots } from "@/server/services/tours/slot-generator.service";
+import { getBusyRangesForProperty } from "@/server/services/tours/availability.service";
+import { generateAvailableTourSlots } from "@/server/services/tours/slot-generator.service";
 import { sendTransactionalEmail } from "@/server/services/outbound/resend.service";
 import { sendTransactionalSms } from "@/server/services/outbound/twilio.service";
+import { getFactsForAI } from "@/server/services/properties/property-fact.service";
 
-function buildTourOfferLines(propertySchedule: unknown, listingTitle: string): string {
-  const slots = generateTourSlots(propertySchedule, new Date(), 3);
+async function buildTourOfferLines(
+  organizationId: string,
+  propertyId: string,
+  propertySchedule: unknown,
+  listingTitle: string,
+): Promise<string> {
+  const now = new Date();
+  const internalBusy = await getBusyRangesForProperty(
+    organizationId,
+    propertyId,
+    now,
+    addHours(now, 24 * 21),
+  );
+  const slots = generateAvailableTourSlots(propertySchedule, now, 3, internalBusy);
   if (slots.length === 0) return "";
   const lines = slots.map(
     (d) =>
@@ -32,6 +46,21 @@ function buildTourOfferLines(propertySchedule: unknown, listingTitle: string): s
       })}`,
   );
   return `Here are a few tour times that work for ${listingTitle}:\n${lines.join("\n")}\nReply with the option you prefer, or suggest another time.`;
+}
+
+async function buildPropertyFactLines(
+  ctx: OrgContext,
+  input: { propertyId?: string | null; unitId?: string | null },
+): Promise<string> {
+  if (!input.propertyId) return "";
+  const kb = await getFactsForAI(ctx, {
+    propertyId: input.propertyId,
+    unitId: input.unitId ?? undefined,
+    maxFacts: 10,
+  });
+  if (kb.facts.length === 0) return "";
+  const highlights = kb.facts.slice(0, 3).map((f) => `• ${f.question}: ${f.answer}`);
+  return `Helpful details:\n${highlights.join("\n")}`;
 }
 
 type PreferredOutboundChannel = "EMAIL" | "SMS" | "AUTO";
@@ -273,11 +302,21 @@ export async function dispatchFirstOutreach(
   const { score } = await getQualificationCompleteness(leadId);
   const property = lead.listing?.unit?.property;
   if (property && score >= 0.5) {
-    const offer = buildTourOfferLines(property.showingSchedule, lead.listing?.title ?? "this home");
+    const offer = await buildTourOfferLines(
+      ctx.organizationId,
+      property.id,
+      property.showingSchedule,
+      lead.listing?.title ?? "this home",
+    );
     if (offer) {
       body = `${body}\n\n${offer}`;
     }
   }
+  const factLines = await buildPropertyFactLines(ctx, {
+    propertyId: property?.id,
+    unitId: lead.listing?.unit?.id ?? null,
+  });
+  if (factLines) body = `${body}\n\n${factLines}`;
 
   await sendToProspect(ctx, {
     leadId,
@@ -344,11 +383,21 @@ export async function dispatchAutomationReply(
   const { score } = await getQualificationCompleteness(leadId);
   const property = lead.listing?.unit?.property;
   if (property && score >= 0.5) {
-    const offer = buildTourOfferLines(property.showingSchedule, lead.listing?.title ?? "this home");
+    const offer = await buildTourOfferLines(
+      ctx.organizationId,
+      property.id,
+      property.showingSchedule,
+      lead.listing?.title ?? "this home",
+    );
     if (offer) {
       body = `${body}\n\n${offer}`;
     }
   }
+  const factLines = await buildPropertyFactLines(ctx, {
+    propertyId: property?.id,
+    unitId: lead.listing?.unit?.id ?? null,
+  });
+  if (factLines) body = `${body}\n\n${factLines}`;
 
   await sendToProspect(ctx, {
     leadId,
@@ -403,11 +452,21 @@ export async function dispatchLeadFollowUp(
   const { score } = await getQualificationCompleteness(leadId);
   const property = lead.listing?.unit?.property;
   if (property && score >= 0.5) {
-    const offer = buildTourOfferLines(property.showingSchedule, lead.listing?.title ?? "this home");
+    const offer = await buildTourOfferLines(
+      ctx.organizationId,
+      property.id,
+      property.showingSchedule,
+      lead.listing?.title ?? "this home",
+    );
     if (offer) {
       body = `${body}\n\n${offer}`;
     }
   }
+  const factLines = await buildPropertyFactLines(ctx, {
+    propertyId: property?.id,
+    unitId: lead.listing?.unit?.id ?? null,
+  });
+  if (factLines) body = `${body}\n\n${factLines}`;
 
   const preferredChannel =
     lead.nextActionType === NextActionType.EMAIL

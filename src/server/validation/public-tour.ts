@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { PUBLIC_INTAKE_HONEYPOT_FIELD } from "@/lib/public-intake-honeypot";
+
 export const publicScheduleTourSchema = z.object({
   orgSlug: z.string().min(1).max(200),
   listingSlug: z.string().min(1).max(200),
@@ -12,7 +14,7 @@ export const publicScheduleTourSchema = z.object({
   notes: z.string().max(2000).optional().or(z.literal("")),
   hasPets: z.enum(["yes", "no", ""]).optional(),
   petsDescription: z.string().max(500).optional().or(z.literal("")),
-  website: z.string().optional(),
+  [PUBLIC_INTAKE_HONEYPOT_FIELD]: z.string().optional(),
 });
 
 export const publicBookTourSchema = z.object({
@@ -22,7 +24,7 @@ export const publicBookTourSchema = z.object({
   lastName: z.string().min(1).max(100).trim(),
   email: z.string().email().max(320),
   slotIso: z.string().min(1).max(80),
-  website: z.string().optional(),
+  [PUBLIC_INTAKE_HONEYPOT_FIELD]: z.string().optional(),
 });
 
 export type PublicScheduleTourInput = z.infer<typeof publicScheduleTourSchema>;

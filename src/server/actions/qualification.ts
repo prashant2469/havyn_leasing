@@ -7,6 +7,7 @@ import { Permission } from "@/server/auth/permissions";
 import { requirePermission } from "@/server/auth/require-permission";
 import type { Prisma } from "@prisma/client";
 
+import { enqueueLeadQualificationsChanged } from "@/server/jobs/events";
 import { upsertQualificationAnswer } from "@/server/services/leasing/qualification.service";
 
 export async function upsertQualificationAction(_prev: unknown, formData: FormData) {
@@ -23,6 +24,7 @@ export async function upsertQualificationAction(_prev: unknown, formData: FormDa
       // keep string
     }
     await upsertQualificationAnswer(ctx, { leadId, key, value });
+    await enqueueLeadQualificationsChanged({ organizationId: ctx.organizationId, leadId });
     revalidatePath(`/leasing/leads/${leadId}`);
     revalidatePath("/leasing/inbox");
     return { ok: true as const };

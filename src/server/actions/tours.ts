@@ -6,8 +6,18 @@ import { requireOrgContext } from "@/server/auth/context";
 import { Permission } from "@/server/auth/permissions";
 import { requirePermission } from "@/server/auth/require-permission";
 import { prisma } from "@/server/db/client";
-import { createTour, updateTourStatus } from "@/server/services/leasing/tour.service";
-import { createTourSchema, updateTourStatusSchema } from "@/server/validation/tour";
+import {
+  cancelTour,
+  createTour,
+  rescheduleTour,
+  updateTourStatus,
+} from "@/server/services/leasing/tour.service";
+import {
+  cancelTourSchema,
+  createTourSchema,
+  rescheduleTourSchema,
+  updateTourStatusSchema,
+} from "@/server/validation/tour";
 
 async function tourLeadId(organizationId: string, tourId: string) {
   const tour = await prisma.tour.findFirst({
@@ -61,6 +71,47 @@ export async function updateTourStatusAction(_prev: unknown, formData: FormData)
     return { ok: true as const };
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to update tour";
+    return { ok: false as const, message };
+  }
+}
+
+export async function rescheduleTourAction(_prev: unknown, formData: FormData) {
+  try {
+    const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.TOURS_MANAGE);
+    const input = rescheduleTourSchema.parse({
+      tourId: formData.get("tourId"),
+      scheduledAt: formData.get("scheduledAt"),
+      notes: formData.get("notes") || undefined,
+    });
+    const leadId = await tourLeadId(ctx.organizationId, input.tourId);
+    await rescheduleTour(ctx, input);
+    revalidatePath(`/leasing/leads/${leadId}`);
+    revalidatePath("/leasing/inbox");
+    revalidatePath("/leasing/leads");
+    return { ok: true as const };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Failed to reschedule tour";
+    return { ok: false as const, message };
+  }
+}
+
+export async function cancelTourAction(_prev: unknown, formData: FormData) {
+  try {
+    const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.TOURS_MANAGE);
+    const input = cancelTourSchema.parse({
+      tourId: formData.get("tourId"),
+      reason: formData.get("reason") || undefined,
+    });
+    const leadId = await tourLeadId(ctx.organizationId, input.tourId);
+    await cancelTour(ctx, input);
+    revalidatePath(`/leasing/leads/${leadId}`);
+    revalidatePath("/leasing/inbox");
+    revalidatePath("/leasing/leads");
+    return { ok: true as const };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Failed to cancel tour";
     return { ok: false as const, message };
   }
 }

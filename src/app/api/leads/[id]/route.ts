@@ -7,16 +7,18 @@ import { loadCopilotContext } from "@/server/services/ai/ai-copilot.service";
 import { listMessagesForLead } from "@/server/services/communications/conversation.service";
 import { getLeadById } from "@/server/services/leasing/lead.service";
 import { resolveReplyStrategy } from "@/server/services/channels/reply-strategy.service";
+import { getLeadTimeline } from "@/server/services/timeline/timeline.service";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const ctx = await requireOrgContext();
     const { id } = await params;
-    const [lead, conversation, activities, aiActions] = await Promise.all([
+    const [lead, conversation, activities, aiActions, timeline] = await Promise.all([
       getLeadById(ctx, id),
       listMessagesForLead(ctx, id),
       listActivityForEntity(ctx, "Lead", id),
       listAIActionsForLead(ctx, id),
+      getLeadTimeline(ctx, id),
     ]);
     if (!lead) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -45,6 +47,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       conversation: conversation ? JSON.parse(JSON.stringify(conversation)) : null,
       activities: JSON.parse(JSON.stringify(activities)),
       aiActions: JSON.parse(JSON.stringify(aiActions)),
+      timeline: JSON.parse(JSON.stringify(timeline)),
       replyStrategy,
       copilotContext: copilotContext ? JSON.parse(JSON.stringify(copilotContext)) : null,
     });

@@ -5,7 +5,8 @@ import { notFound } from "next/navigation";
 import { prospectListingAbsoluteUrl } from "@/lib/public-url";
 import { getS3PublicUrl } from "@/lib/s3";
 import { getPublishedPublicListing } from "@/server/services/listings/public-listing.service";
-import { generateTourSlots } from "@/server/services/tours/slot-generator.service";
+import { getBusyRangesForProperty } from "@/server/services/tours/availability.service";
+import { generateAvailableTourSlots } from "@/server/services/tours/slot-generator.service";
 
 import { PublicListingLeadPanel } from "./public-listing-lead-panel";
 import { PublicListingStickyCta } from "./public-listing-sticky-cta";
@@ -68,7 +69,15 @@ export default async function PublicListingPage({ params }: Props) {
       ? metadata.contactPhone
       : null;
 
-  const slotDates = generateTourSlots(property.showingSchedule, new Date(), 8);
+  const rangeStart = new Date();
+  const rangeEnd = new Date(rangeStart.getTime() + 21 * 24 * 60 * 60 * 1000);
+  const internalBusy = await getBusyRangesForProperty(
+    listing.organizationId,
+    property.id,
+    rangeStart,
+    rangeEnd,
+  );
+  const slotDates = generateAvailableTourSlots(property.showingSchedule, rangeStart, 8, internalBusy);
   const tourSlots = slotDates.map((d) => ({
     iso: d.toISOString(),
     label: d.toLocaleString(undefined, {
@@ -183,6 +192,39 @@ export default async function PublicListingPage({ params }: Props) {
             <p className="text-muted-foreground text-base leading-relaxed">{listing.petPolicy}</p>
           </section>
         ) : null}
+
+        {(property.parkingType ||
+          property.laundryType ||
+          property.neighborhood ||
+          property.schoolDistrict ||
+          (Array.isArray(property.amenities) && property.amenities.length > 0)) && (
+          <section className="mb-10">
+            <h2 className="mb-3 text-base font-semibold tracking-tight">Property details</h2>
+            <div className="grid gap-2 text-sm text-muted-foreground md:grid-cols-2">
+              {property.neighborhood ? <p>Neighborhood: {property.neighborhood}</p> : null}
+              {property.schoolDistrict ? <p>School district: {property.schoolDistrict}</p> : null}
+              {property.parkingType ? (
+                <p>
+                  Parking: {property.parkingType}
+                  {property.parkingSpaces ? ` (${property.parkingSpaces} spaces)` : ""}
+                </p>
+              ) : null}
+              {property.laundryType ? <p>Laundry: {property.laundryType}</p> : null}
+            </div>
+            {Array.isArray(property.amenities) && property.amenities.length > 0 ? (
+              <ul className="mt-3 flex flex-wrap gap-2">
+                {property.amenities.map((a) => (
+                  <li
+                    key={String(a)}
+                    className="bg-muted/80 text-muted-foreground rounded-full border border-border/50 px-3 py-1.5 text-xs font-medium"
+                  >
+                    {String(a)}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
+        )}
 
         {contactEmail || contactPhone ? (
           <section className="mb-10">

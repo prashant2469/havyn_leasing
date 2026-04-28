@@ -11,6 +11,7 @@ import {
   dispatchFirstOutreach,
   dispatchLeadFollowUp,
 } from "@/server/services/outbound/dispatch.service";
+import { generateRecommendations } from "@/server/services/recommendations/recommendation.service";
 import { sendTransactionalEmail } from "@/server/services/outbound/resend.service";
 
 export const leadIngested = inngest.createFunction(
@@ -190,10 +191,26 @@ export const leadFollowUpSweep = inngest.createFunction(
   },
 );
 
+export const leadQualificationsChanged = inngest.createFunction(
+  {
+    id: "lead-qualifications-changed",
+    name: "Lead qualifications changed — refresh recommendations",
+    triggers: [{ event: "lead/qualifications_changed" }],
+  },
+  async ({ event, step }) => {
+    const { organizationId, leadId } = event.data;
+    await step.run("refresh-recommendations", async () => {
+      const ctx = await getAutomationOrgContext(organizationId);
+      await generateRecommendations(ctx, leadId);
+    });
+  },
+);
+
 export const inngestFunctions = [
   leadIngested,
   messageReceived,
   tourReminder,
   leadFollowUpDue,
   leadFollowUpSweep,
+  leadQualificationsChanged,
 ];

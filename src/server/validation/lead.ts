@@ -35,3 +35,13 @@ export const updateLeadInboxStageSchema = z.object({
 });
 
 export type UpdateLeadInboxStageInput = z.infer<typeof updateLeadInboxStageSchema>;
+
+export const updateLeadContactSchema = z.object({
+  leadId: z.string().cuid(),
+  firstName: z.string().min(1).max(100).trim(),
+  lastName: z.string().min(1).max(100).trim(),
+  email: z.union([z.string().email().max(320), z.literal("")]).optional(),
+  phone: z.string().max(40).optional().or(z.literal("")),
+});
+
+export type UpdateLeadContactInput = z.infer<typeof updateLeadContactSchema>;

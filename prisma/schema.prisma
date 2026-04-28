@@ -36,6 +36,8 @@ model Organization {
   suggestedActions      AISuggestedAction[]
   escalationFlags       AIEscalationFlag[]
   prioritySignals       LeadPrioritySignal[]
+  googleCalendarConnections GoogleCalendarConnection[]
+  propertyFacts     PropertyFact[]
 }
 
 model User {
@@ -46,9 +48,6 @@ model User {
   image         String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
-
-  accounts Account[]
-  sessions Session[]
 
   memberships              Membership[]
   leadsAssigned            Lead[]                @relation("LeadAssignee")
@@ -62,6 +61,7 @@ model User {
   replyDraftsReviewed      AIReplyDraft[]        @relation("ReplyDraftReviewer")
   suggestedActionsActioned AISuggestedAction[]   @relation("SuggestedActionActioned")
   escalationsResolved      AIEscalationFlag[]    @relation("EscalationResolver")
+  googleCalendarConnections GoogleCalendarConnection[]
 }
 
 enum MembershipRole {
@@ -85,45 +85,6 @@ model Membership {
   @@index([organizationId])
 }
 
-// Auth.js — OAuth accounts and optional DB sessions
-model Account {
-  id                String  @id @default(cuid())
-  userId            String
-  type              String
-  provider          String
-  providerAccountId String
-  refresh_token     String? @db.Text
-  access_token      String? @db.Text
-  expires_at        Int?
-  token_type        String?
-  scope             String?
-  id_token          String? @db.Text
-  session_state     String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([provider, providerAccountId])
-  @@index([userId])
-}
-
-model Session {
-  id           String   @id @default(cuid())
-  sessionToken String   @unique
-  userId       String
-  expires      DateTime
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-}
-
-model VerificationToken {
-  identifier String
-  token      String   @unique
-  expires    DateTime
-
-  @@unique([identifier, token])
-}
-
 // --- Properties & units ---
 
 enum PropertyStatus {
@@ -143,12 +104,28 @@ model Property {
   status         PropertyStatus @default(ACTIVE)
   /// V4: JSON schedule — { "weekdayWindows": [{ "weekdays": [1,2,3,4,5], "start": "09:00", "end": "18:00" }], "tourDurationMinutes": 30, "blackouts": [{ "start": "ISO", "end": "ISO" }] }
   showingSchedule Json           @default("{}")
+  latitude       Float?
+  longitude      Float?
+  parkingType    String?
+  parkingSpaces  Int?
+  laundryType    String?
+  yearBuilt      Int?
+  propertyType   String?
+  neighborhood   String?
+  transitNotes   String?         @db.Text
+  schoolDistrict String?
+  petRules       Json            @default("{}")
+  amenities      Json            @default("[]")
+  utilityNotes   String?         @db.Text
+  leaseTerms     Json            @default("{}")
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   units        Unit[]
   leads        Lead[]
+  tours        Tour[]
+  facts        PropertyFact[]
 
   @@index([organizationId, status])
 }
@@ -175,9 +152,47 @@ model Unit {
   listings               Listing[]
   leadsPrimaryInterest   Lead[]    @relation("LeadPrimaryUnit")
   leases                 Lease[]
+  facts                  PropertyFact[]
 
   @@unique([propertyId, unitNumber])
   @@index([propertyId])
+}
+
+enum PropertyFactCategory {
+  GENERAL
+  FEES_AND_COSTS
+  PET_POLICY
+  PARKING
+  UTILITIES
+  AMENITIES
+  LEASE_TERMS
+  MOVE_IN
+  MAINTENANCE
+  RULES_AND_POLICIES
+  NEIGHBORHOOD
+  CUSTOM
+}
+
+model PropertyFact {
+  id             String               @id @default(cuid())
+  organizationId String
+  propertyId     String
+  unitId         String?
+  category       PropertyFactCategory @default(GENERAL)
+  question       String
+  answer         String               @db.Text
+  isPublic       Boolean              @default(true)
+  sortOrder      Int                  @default(0)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  property     Property     @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  unit         Unit?        @relation(fields: [unitId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, propertyId])
+  @@index([propertyId, category])
+  @@index([unitId, category])
 }
 
 // --- Listing Hub (V2: syndication-ready) ---
@@ -219,6 +234,7 @@ model Listing {
   leads         Lead[]
   tours         Tour[]
   conversations Conversation[]
+  recommendations PropertyRecommendation[]
 
   @@unique([organizationId, publicSlug])
   @@index([organizationId, status])
@@ -420,6 +436,7 @@ model Lead {
   suggestedActions      AISuggestedAction[]
   escalationFlags       AIEscalationFlag[]
   prioritySignal        LeadPrioritySignal?
+  recommendations       PropertyRecommendation[]
 
   @@index([organizationId, inboxStage])
   @@index([organizationId, status])
@@ -482,7 +499,13 @@ model Tour {
   id           String     @id @default(cuid())
   leadId       String
   listingId    String?
+  propertyId   String?
   scheduledAt  DateTime
+  durationMinutes Int     @default(30)
+  googleEventId String?
+  cancelledAt  DateTime?
+  cancelReason String?
+  rescheduledFrom String?
   status       TourStatus @default(SCHEDULED)
   notes        String?
   createdAt    DateTime   @default(now())
@@ -490,10 +513,55 @@ model Tour {
 
   lead    Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
   listing Listing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  property Property? @relation(fields: [propertyId], references: [id], onDelete: SetNull)
 
   @@index([leadId])
   @@index([listingId])
+  @@index([propertyId])
   @@index([scheduledAt])
+}
+
+enum RecommendationStatus {
+  SUGGESTED
+  SHARED_WITH_PROSPECT
+  PROSPECT_INTERESTED
+  DISMISSED
+}
+
+model PropertyRecommendation {
+  id        String               @id @default(cuid())
+  leadId    String
+  listingId String
+  score     Float
+  factors   Json                 @default("{}")
+  status    RecommendationStatus @default(SUGGESTED)
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  lead    Lead    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([leadId, listingId])
+  @@index([leadId, score])
+}
+
+model GoogleCalendarConnection {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  calendarId     String
+  accessToken    String   @db.Text
+  refreshToken   String   @db.Text
+  tokenExpiresAt DateTime
+  scope          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
 }
 
 enum ApplicationStatus {
@@ -769,6 +837,8 @@ enum AISuggestedActionType {
   REPLY_NOW
   ASK_QUALIFICATION
   OFFER_TOUR_TIMES
+  SHARE_RECOMMENDATIONS
+  SCHEDULE_RECOMMENDED_TOUR
   SEND_APPLICATION_INVITE
   HAND_OFF_TO_HUMAN
   FOLLOW_UP_24H

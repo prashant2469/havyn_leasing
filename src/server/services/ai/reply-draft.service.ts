@@ -14,8 +14,13 @@ import { qualificationGapLabelsForLead } from "@/server/services/ai/copilot-qual
 import { tryLlmReplyDraft } from "@/server/services/ai/llm/copilot-llm";
 import { sendToProspect } from "@/server/services/outbound/dispatch.service";
 import { getQualificationCompleteness } from "@/server/services/leasing/qualification-score.service";
+import { getFactsForAI } from "@/server/services/properties/property-fact.service";
 
-async function _generateDraftBody(conversationId: string, leadId: string): Promise<{
+async function _generateDraftBody(
+  ctx: OrgContext,
+  conversationId: string,
+  leadId: string,
+): Promise<{
   body: string;
   suggestedChannel: MessageChannel;
   contextNote: string;
@@ -29,7 +34,7 @@ async function _generateDraftBody(conversationId: string, leadId: string): Promi
         select: {
           firstName: true,
           lastName: true,
-          listing: { select: { title: true } },
+          listing: { select: { title: true, unit: { select: { id: true, propertyId: true } } } },
         },
       },
     },
@@ -64,12 +69,23 @@ async function _generateDraftBody(conversationId: string, leadId: string): Promi
     : "Heuristic follow-up — references qualification gaps when present.";
 
   const transcript = conversation.messages.map((m) => `${m.direction}: ${m.body}`).join("\n");
+  const propertyId = conversation.lead?.listing?.unit?.propertyId ?? null;
+  const unitId = conversation.lead?.listing?.unit?.id ?? null;
+  const kb = propertyId ? await getFactsForAI(ctx, { propertyId, unitId, maxFacts: 20 }) : null;
+  const factHint =
+    kb && kb.facts.length > 0
+      ? `\n\nReference facts:\n${kb.facts
+          .slice(0, 3)
+          .map((f) => `- ${f.question}: ${f.answer}`)
+          .join("\n")}`
+      : "";
 
   const llm = await tryLlmReplyDraft({
     transcript,
     firstName,
     listingTitle: listingTitle ?? undefined,
-    heuristicBody: body,
+    heuristicBody: `${body}${factHint}`,
+    propertyFactsBlock: kb?.promptBlock,
   });
 
   if (llm) {
@@ -100,7 +116,7 @@ export async function suggestReplyDraft(
     data: { status: "SUPERSEDED" },
   });
 
-  const content = await _generateDraftBody(conversationId, conversation.leadId);
+  const content = await _generateDraftBody(ctx, conversationId, conversation.leadId);
 
   const draft = await prisma.aIReplyDraft.create({
     data: {

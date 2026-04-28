@@ -3,6 +3,7 @@
 import { ListingChannelType, Prisma } from "@prisma/client";
 import { ZodError } from "zod";
 
+import { PUBLIC_INTAKE_HONEYPOT_FIELD, isPublicIntakeHoneypotTripped } from "@/lib/public-intake-honeypot";
 import { ingestInquiry } from "@/server/services/channels/inquiry-ingest.service";
 import { prisma } from "@/server/db/client";
 import { getPublishedPublicListing } from "@/server/services/listings/public-listing.service";
@@ -26,6 +27,10 @@ export async function submitPublicInquiryAction(
   formData: FormData,
 ): Promise<PublicInquiryActionState> {
   try {
+    if (isPublicIntakeHoneypotTripped(formData)) {
+      return { ok: true, message: "Thanks — we'll be in touch shortly." };
+    }
+
     const raw = {
       orgSlug: formData.get("orgSlug"),
       listingSlug: formData.get("listingSlug"),
@@ -36,13 +41,9 @@ export async function submitPublicInquiryAction(
       message: formData.get("message"),
       hasPets: formData.get("hasPets") || "",
       petsDescription: formData.get("petsDescription") || "",
-      website: formData.get("website") || "",
+      [PUBLIC_INTAKE_HONEYPOT_FIELD]: formData.get(PUBLIC_INTAKE_HONEYPOT_FIELD) || "",
     };
     const input = publicInquiryFormSchema.parse(raw);
-
-    if (input.website?.trim()) {
-      return { ok: true, message: "Thanks — we'll be in touch shortly." };
-    }
 
     if (!input.email?.trim() && !input.phone?.trim()) {
       return { ok: false, message: "Please provide an email or phone number so we can reach you." };

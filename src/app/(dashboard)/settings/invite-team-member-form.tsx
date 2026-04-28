@@ -50,7 +50,11 @@ export function InviteTeamMemberForm({ canInvite }: { canInvite: boolean }) {
         {pending ? "Inviting..." : "Invite"}
       </Button>
       {state && !state.ok ? <p className="text-destructive text-xs md:col-span-3">{state.message}</p> : null}
-      {state?.ok ? <p className="text-xs text-green-600 md:col-span-3">Invite sent.</p> : null}
+      {state?.ok ? (
+        <p className="text-xs text-green-600 md:col-span-3">
+          {state.message ?? "Invite sent. Password setup email delivered."}
+        </p>
+      ) : null}
     </form>
   );
 }

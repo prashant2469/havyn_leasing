@@ -17,3 +17,18 @@ export const updateTourStatusSchema = z.object({
 });
 
 export type UpdateTourStatusInput = z.infer<typeof updateTourStatusSchema>;
+
+export const rescheduleTourSchema = z.object({
+  tourId: z.string().cuid(),
+  scheduledAt: z.coerce.date(),
+  notes: z.string().max(2000).optional().or(z.literal("")),
+});
+
+export type RescheduleTourInput = z.infer<typeof rescheduleTourSchema>;
+
+export const cancelTourSchema = z.object({
+  tourId: z.string().cuid(),
+  reason: z.string().max(2000).optional().or(z.literal("")),
+});
+
+export type CancelTourInput = z.infer<typeof cancelTourSchema>;

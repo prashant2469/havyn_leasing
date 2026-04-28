@@ -16,6 +16,7 @@ import { qualificationGapLabelsForLead } from "@/server/services/ai/copilot-qual
 import { recordHumanHandoff } from "@/server/services/leasing/handoff.service";
 import { getQualificationCompleteness } from "@/server/services/leasing/qualification-score.service";
 import { sendToProspect } from "@/server/services/outbound/dispatch.service";
+import { generateRecommendations, listRecommendationsForLead } from "@/server/services/recommendations/recommendation.service";
 
 interface ActionSuggestion {
   actionType: AISuggestedActionType;
@@ -37,6 +38,11 @@ async function _generateSuggestedActions(leadId: string): Promise<ActionSuggesti
       },
       tours: { take: 1, orderBy: { scheduledAt: "asc" } },
       qualifications: true,
+      recommendations: {
+        orderBy: { score: "desc" },
+        take: 3,
+        include: { listing: { select: { title: true } } },
+      },
     },
   });
 
@@ -81,6 +87,23 @@ async function _generateSuggestedActions(leadId: string): Promise<ActionSuggesti
       description:
         "Lead has enough context to tour. Propose 2–3 slots aligned with the property showing schedule and confirm contact channel.",
       priority: 90,
+    });
+  }
+
+  if (score >= 0.6 && lead.recommendations.length > 0) {
+    actions.push({
+      actionType: "SHARE_RECOMMENDATIONS",
+      title: "Share matching alternatives",
+      description:
+        "Lead is qualified enough for alternatives. Share top matching properties and ask which one they want to tour.",
+      priority: 88,
+    });
+    actions.push({
+      actionType: "SCHEDULE_RECOMMENDED_TOUR",
+      title: "Offer tours for recommendation shortlist",
+      description:
+        "Use top recommendations to offer concrete tour windows and reduce back-and-forth.",
+      priority: 84,
     });
   }
 
@@ -288,6 +311,32 @@ async function applySuggestedActionSideEffects(ctx: OrgContext, action: AISugges
       await prisma.lead.update({
         where: { id: leadId },
         data: { nextActionAt: addHours(now, 24), nextActionType: NextActionType.TOUR },
+      });
+      break;
+    case AISuggestedActionType.SHARE_RECOMMENDATIONS: {
+      await generateRecommendations(ctx, leadId);
+      const recs = await listRecommendationsForLead(ctx, leadId);
+      const top = recs.slice(0, 3);
+      if (lead && conversationId && top.length > 0) {
+        const lines = top.map(
+          (r) =>
+            `- ${r.listing.title} (${r.listing.unit.property.name}, Unit ${r.listing.unit.unitNumber})`,
+        );
+        await sendToProspect(ctx, {
+          leadId,
+          conversationId,
+          body: `Hi ${lead.firstName},\n\nBased on what you shared, here are a few similar options:\n${lines.join("\n")}\n\nReply with your top pick and I can send tour times.`,
+          subject: "Matching homes you might like — Havyn Leasing",
+          preferredChannel: "AUTO",
+          fallbackLabel: "Recommendation share not sent — no deliverable channel configured",
+        });
+      }
+      break;
+    }
+    case AISuggestedActionType.SCHEDULE_RECOMMENDED_TOUR:
+      await prisma.lead.update({
+        where: { id: leadId },
+        data: { nextActionAt: addHours(now, 2), nextActionType: NextActionType.TOUR },
       });
       break;
     default:
