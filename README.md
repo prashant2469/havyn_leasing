@@ -26,3 +26,17 @@ npm run dev
   - `SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_URL`
   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
   - `SUPABASE_SERVICE_ROLE_KEY` (for team invites and password setup emails)
+
+## Vercel / production
+
+Prisma requires Postgres connection strings (Supabase URL alone is not enough):
+
+- `DATABASE_URL` — pooled connection string from Supabase (**Project Settings → Database**)
+- `DIRECT_URL` — direct connection string (same screen; used for migrations / some Prisma flows)
+
+Optional but required if anyone has connected Google Calendar in that database:
+
+- `GOOGLE_CALENDAR_CLIENT_ID`
+- `GOOGLE_CALENDAR_CLIENT_SECRET`
+
+Also set `NEXT_PUBLIC_APP_URL` to your production site URL (e.g. `https://havyn-leasing.vercel.app`).

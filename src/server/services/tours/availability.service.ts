@@ -44,7 +44,15 @@ export async function getBusyRangesForProperty(
 ): Promise<BusyRange[]> {
   const [internalBusy, googleBusy] = await Promise.all([
     getInternalBusyRangesForProperty(organizationId, propertyId, from, to),
-    getGoogleFreeBusyRangesForOrganization(organizationId, from, to),
+    getGoogleFreeBusyRangesForOrganization(organizationId, from, to).catch((err) => {
+      // Public listing pages must not 500 when Google env is incomplete or tokens fail.
+      console.error("[availability] Google free/busy skipped for property tour slots", {
+        organizationId,
+        propertyId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [] as BusyRange[];
+    }),
   ]);
   return [...internalBusy, ...googleBusy];
 }
