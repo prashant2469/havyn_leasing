@@ -13,6 +13,8 @@ import { PublicListingStickyCta } from "./public-listing-sticky-cta";
 
 type Props = { params: Promise<{ orgSlug: string; listingSlug: string }> };
 
+export const maxDuration = 60;
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { orgSlug, listingSlug } = await params;
   const listing = await getPublishedPublicListing(orgSlug, listingSlug);

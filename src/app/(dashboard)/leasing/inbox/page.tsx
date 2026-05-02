@@ -17,15 +17,15 @@ export default async function LeasingInboxPage() {
   return (
     <div className="flex min-h-[calc(100vh-8rem)] flex-col gap-4">
       <PageHeader
-        title="Leasing inbox"
-        description="Color-coded pipeline board with stage columns, urgency tags, and an in-context lead drawer."
+        title="Pipeline board"
+        description="Kanban command workspace for triage, communications, qualification, tours, and applications."
         actions={
           <>
             <Link href="/analysis" className={cn(buttonVariants({ variant: "outline" }))}>
               Analysis
             </Link>
-            <Link href="/leasing/leads" className={cn(buttonVariants({ variant: "outline" }))}>
-              Table view
+            <Link href="/leasing/calendar" className={cn(buttonVariants({ variant: "outline" }))}>
+              Calendar
             </Link>
           </>
         }

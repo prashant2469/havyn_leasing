@@ -9,14 +9,17 @@
 import { QualificationAnswer } from "@prisma/client";
 
 import { ActivityVerbs } from "@/domains/activity/verbs";
+import type { QualificationKey } from "@/domains/leasing/qualification-keys";
 import { recordActivity } from "@/server/services/activity/activity.service";
 import { prisma } from "@/server/db/client";
 import type { OrgContext } from "@/server/auth/context";
+import { tryLlmQualificationExtraction } from "@/server/services/ai/llm/copilot-llm";
 
 interface ExtractedField {
-  key: string;
+  key: QualificationKey;
   value: string;
   label: string;
+  confidence?: number;
 }
 
 /**
@@ -66,7 +69,25 @@ function _extractQualificationFields(messages: { body: string }[]): ExtractedFie
 
   // Voucher / section 8 signals
   if (/section\s*8|housing choice|voucher/i.test(fullText)) {
-    extracted.push({ key: "hasVoucher", value: "true", label: "Has housing voucher" });
+    extracted.push({
+      key: "currentLeaseSituation",
+      value: "voucher mentioned",
+      label: "Current lease situation",
+    });
+  }
+
+  if (/full[\s-]?time|part[\s-]?time|self[\s-]?employed|student|contractor/i.test(fullText)) {
+    extracted.push({ key: "employmentType", value: "mentioned", label: "Employment type" });
+  }
+
+  if (/good credit|great credit|fair credit|poor credit|rebuilding credit/i.test(fullText)) {
+    extracted.push({ key: "creditSelfReport", value: "mentioned", label: "Credit self-report" });
+  }
+
+  if (/(urgent|asap|immediately|next week|this week)/i.test(fullText)) {
+    extracted.push({ key: "moveInUrgency", value: "urgent", label: "Move-in urgency" });
+  } else if (/(flexible|not urgent|no rush)/i.test(fullText)) {
+    extracted.push({ key: "moveInUrgency", value: "flexible", label: "Move-in urgency" });
   }
 
   return extracted;
@@ -86,7 +107,17 @@ export async function extractQualificationsFromConversation(
   if (!conversation) throw new Error("Conversation not found");
   if (!conversation.leadId) throw new Error("Conversation has no lead");
 
-  const fields = _extractQualificationFields(conversation.messages);
+  const transcript = conversation.messages.map((m) => `${m.direction}: ${m.body}`).join("\n");
+  const latestInbound = [...conversation.messages].reverse().find((m) => m.direction === "INBOUND")?.body;
+  const llm = await tryLlmQualificationExtraction({ transcript, latestInbound });
+  const fields = llm?.fields?.length
+    ? llm.fields.map((f) => ({
+        key: f.key,
+        value: f.value,
+        label: f.label,
+        confidence: f.confidence,
+      }))
+    : _extractQualificationFields(conversation.messages);
   if (fields.length === 0) return [];
 
   const upserted: QualificationAnswer[] = [];
@@ -110,14 +141,22 @@ export async function extractQualificationsFromConversation(
       update: {
         value: field.value,
         source: "AI_EXTRACTED",
-        metadata: { label: field.label },
+        metadata: {
+          label: field.label,
+          confidence: field.confidence ?? null,
+          extractor: llm ? "openai-json" : "regex-fallback",
+        },
       },
       create: {
         leadId: conversation.leadId,
         key: field.key,
         value: field.value,
         source: "AI_EXTRACTED",
-        metadata: { label: field.label },
+        metadata: {
+          label: field.label,
+          confidence: field.confidence ?? null,
+          extractor: llm ? "openai-json" : "regex-fallback",
+        },
       },
     });
     upserted.push(qa);

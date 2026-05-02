@@ -47,6 +47,14 @@ export async function listLeads(ctx: OrgContext) {
       prioritySignal: {
         select: { priorityTier: true, isAtRisk: true, needsImmediateResponse: true },
       },
+      strengthSignal: {
+        select: { strengthTier: true, overallScore: true },
+      },
+      replyDrafts: {
+        where: { status: { in: ["SUGGESTED", "APPROVED"] } },
+        select: { id: true, status: true },
+        take: 1,
+      },
       escalationFlags: {
         where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } },
         select: { id: true },
@@ -88,6 +96,14 @@ export async function listLeadsByInboxStages(ctx: OrgContext, stages: LeadInboxS
       },
       prioritySignal: {
         select: { priorityTier: true, isAtRisk: true, needsImmediateResponse: true },
+      },
+      strengthSignal: {
+        select: { strengthTier: true, overallScore: true },
+      },
+      replyDrafts: {
+        where: { status: { in: ["SUGGESTED", "APPROVED"] } },
+        select: { id: true, status: true },
+        take: 1,
       },
       escalationFlags: {
         where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } },
@@ -346,6 +362,7 @@ export async function advanceLeadPipeline(
     inboxStage?: LeadInboxStage;
     nextActionAt?: Date | null;
     nextActionType?: NextActionType | null;
+    automationPaused?: boolean;
   },
 ) {
   const existing = await prisma.lead.findFirst({
@@ -362,6 +379,9 @@ export async function advanceLeadPipeline(
       ...(input.nextActionType !== undefined
         ? { nextActionType: input.nextActionType ?? null }
         : {}),
+      ...(input.automationPaused !== undefined
+        ? { automationPaused: input.automationPaused }
+        : {}),
     },
   });
 
@@ -370,8 +390,16 @@ export async function advanceLeadPipeline(
     verb: ActivityVerbs.LEAD_INBOX_STAGE_CHANGED,
     entityType: "Lead",
     entityId: updated.id,
-    payloadBefore: { status: existing.status, inboxStage: existing.inboxStage },
-    payloadAfter: { status: updated.status, inboxStage: updated.inboxStage },
+    payloadBefore: {
+      status: existing.status,
+      inboxStage: existing.inboxStage,
+      automationPaused: existing.automationPaused,
+    },
+    payloadAfter: {
+      status: updated.status,
+      inboxStage: updated.inboxStage,
+      automationPaused: updated.automationPaused,
+    },
   });
 
   return updated;

@@ -1,6 +1,7 @@
 import {
   ConversationReplyMode,
   LeadInboxStage,
+  ListingChannelType,
   MessageAuthorType,
   MessageChannel,
   MessageDirection,
@@ -9,6 +10,7 @@ import {
 
 import { defaultReplyModeForChannel } from "@/domains/channels/constants";
 import { ActivityVerbs } from "@/domains/activity/verbs";
+import { normalizePhoneToE164 } from "@/lib/phone";
 import type { ActivitySourceContext } from "@/server/services/activity/activity.service";
 import { prisma } from "@/server/db/client";
 import { logActivity } from "@/server/services/activity/activity.service";
@@ -37,6 +39,96 @@ export interface IngestInquiryResult {
   replyMode: ConversationReplyMode;
 }
 
+async function upsertLeadContactIdentities(input: {
+  leadId: string;
+  email?: string | null;
+  phone?: string | null;
+}) {
+  const writes: Promise<unknown>[] = [];
+  const email = input.email?.trim().toLowerCase();
+  if (email) {
+    writes.push(
+      prisma.contactChannelIdentity.upsert({
+        where: {
+          leadId_channelType_handle: {
+            leadId: input.leadId,
+            channelType: ListingChannelType.EMAIL,
+            handle: email,
+          },
+        },
+        update: {},
+        create: {
+          leadId: input.leadId,
+          channelType: ListingChannelType.EMAIL,
+          handle: email,
+        },
+      }),
+    );
+  }
+
+  const normalizedPhone = normalizePhoneToE164(input.phone);
+  if (normalizedPhone) {
+    writes.push(
+      prisma.contactChannelIdentity.upsert({
+        where: {
+          leadId_channelType_handle: {
+            leadId: input.leadId,
+            channelType: ListingChannelType.SMS,
+            handle: normalizedPhone,
+          },
+        },
+        update: {},
+        create: {
+          leadId: input.leadId,
+          channelType: ListingChannelType.SMS,
+          handle: normalizedPhone,
+        },
+      }),
+    );
+  }
+
+  if (writes.length > 0) {
+    await Promise.all(writes);
+  }
+}
+
+export async function resolveLeadByPhone(params: {
+  organizationId: string;
+  phone: string;
+  listingId?: string | null;
+}) {
+  const normalizedPhone = normalizePhoneToE164(params.phone);
+  if (!normalizedPhone) return null;
+
+  const byIdentity = await prisma.contactChannelIdentity.findFirst({
+    where: {
+      channelType: ListingChannelType.SMS,
+      handle: normalizedPhone,
+      lead: {
+        organizationId: params.organizationId,
+        ...(params.listingId ? { listingId: params.listingId } : {}),
+      },
+    },
+    select: { leadId: true },
+  });
+  if (byIdentity?.leadId) {
+    return prisma.lead.findFirst({
+      where: {
+        id: byIdentity.leadId,
+        organizationId: params.organizationId,
+      },
+    });
+  }
+
+  return prisma.lead.findFirst({
+    where: {
+      organizationId: params.organizationId,
+      phone: normalizedPhone,
+      ...(params.listingId ? { listingId: params.listingId } : {}),
+    },
+  });
+}
+
 /**
  * Core ingestion coordinator — creates or upserts a Lead, Conversation, and
  * first Message from any channel source. Channel adapters call this after
@@ -49,16 +141,26 @@ export async function ingestInquiry(
   const replyMode =
     defaultReplyModeForChannel[params.channelType] ?? ConversationReplyMode.MANUAL_ONLY;
 
-  // --- Lead dedup: match by email within the org (and optionally listing) ---
-  let lead = params.contact.email
+  const normalizedEmail = params.contact.email?.trim().toLowerCase() ?? null;
+  const normalizedPhone = normalizePhoneToE164(params.contact.phone) ?? params.contact.phone ?? null;
+
+  // --- Lead dedup: match by email first, then phone identity/phone within org ---
+  let lead = normalizedEmail
     ? await prisma.lead.findFirst({
         where: {
           organizationId: ctx.organizationId,
-          email: params.contact.email,
+          email: normalizedEmail,
           ...(params.listingId ? { listingId: params.listingId } : {}),
         },
       })
     : null;
+  if (!lead && normalizedPhone) {
+    lead = await resolveLeadByPhone({
+      organizationId: ctx.organizationId,
+      phone: normalizedPhone,
+      listingId: params.listingId,
+    });
+  }
 
   const isNewLead = !lead;
 
@@ -79,8 +181,8 @@ export async function ingestInquiry(
         primaryUnitId: listing?.unitId ?? null,
         firstName: params.contact.firstName,
         lastName: params.contact.lastName,
-        email: params.contact.email ?? null,
-        phone: params.contact.phone ?? null,
+        email: normalizedEmail,
+        phone: normalizedPhone,
         inboxStage: LeadInboxStage.NEW_INQUIRY,
         source: params.channelType,
         sourceChannelType: params.channelType,
@@ -116,6 +218,12 @@ export async function ingestInquiry(
       },
     });
   }
+
+  await upsertLeadContactIdentities({
+    leadId: lead.id,
+    email: normalizedEmail ?? lead.email,
+    phone: normalizedPhone ?? lead.phone,
+  });
   // Inbound does not touch firstResponseAt / lastResponseAt — those track org outbound only.
 
   // --- Conversation: one per lead (dedup by leadId) ---

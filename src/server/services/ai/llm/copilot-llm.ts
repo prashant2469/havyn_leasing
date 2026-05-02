@@ -11,6 +11,29 @@ const llmDraftSchema = z.object({
   contextNote: z.string().max(500).optional(),
 });
 
+const llmQualificationExtractionSchema = z.object({
+  fields: z.array(
+    z.object({
+      key: z.enum([
+        "moveInDate",
+        "bedrooms",
+        "pets",
+        "monthlyBudget",
+        "occupants",
+        "propertyInterest",
+        "incomeRange",
+        "currentLeaseSituation",
+        "employmentType",
+        "creditSelfReport",
+        "moveInUrgency",
+      ]),
+      value: z.string().min(1),
+      label: z.string().min(1),
+      confidence: z.number().min(0).max(1).optional(),
+    }),
+  ),
+});
+
 function aiEnabled(): boolean {
   return process.env.ENABLE_AI_SUGGESTIONS === "true" && Boolean(process.env.OPENAI_API_KEY?.trim());
 }
@@ -76,6 +99,7 @@ export async function tryLlmConversationSummary(input: {
 }
 
 export type LlmDraftResult = z.infer<typeof llmDraftSchema>;
+export type LlmQualificationExtractionResult = z.infer<typeof llmQualificationExtractionSchema>;
 
 export async function tryLlmReplyDraft(input: {
   transcript: string;
@@ -123,6 +147,51 @@ export async function tryLlmReplyDraft(input: {
     const raw = data.choices?.[0]?.message?.content;
     if (!raw) return null;
     const parsed = llmDraftSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function tryLlmQualificationExtraction(input: {
+  transcript: string;
+  latestInbound?: string;
+}): Promise<LlmQualificationExtractionResult | null> {
+  if (!aiEnabled()) return null;
+  const model = process.env.OPENAI_COPILOT_MODEL ?? "gpt-4o-mini";
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              "Extract leasing qualification fields from the conversation. Return strict JSON with key `fields` as an array of objects: { key, value, label, confidence }. Only include fields that have explicit evidence in the transcript. Do not guess. Valid keys: moveInDate, bedrooms, pets, monthlyBudget, occupants, propertyInterest, incomeRange, currentLeaseSituation, employmentType, creditSelfReport, moveInUrgency.",
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              latestInbound: input.latestInbound ?? "",
+              transcript: input.transcript.slice(0, 14000),
+            }),
+          },
+        ],
+      }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const raw = data.choices?.[0]?.message?.content;
+    if (!raw) return null;
+    const parsed = llmQualificationExtractionSchema.safeParse(JSON.parse(raw));
     return parsed.success ? parsed.data : null;
   } catch {
     return null;

@@ -36,8 +36,10 @@ model Organization {
   suggestedActions      AISuggestedAction[]
   escalationFlags       AIEscalationFlag[]
   prioritySignals       LeadPrioritySignal[]
+  strengthSignals       LeadStrengthSignal[]
   googleCalendarConnections GoogleCalendarConnection[]
   propertyFacts     PropertyFact[]
+  smsConsents      SmsConsent[]
 }
 
 model User {
@@ -384,6 +386,32 @@ enum NextActionType {
   OTHER
 }
 
+enum LeadAutomationMode {
+  AUTO
+  DRAFT_REVIEW
+  MANUAL
+}
+
+enum InboundIntentType {
+  PROPERTY_QUESTION
+  TOUR_INTEREST
+  TOUR_CONFIRMATION
+  APPLICATION_QUESTION
+  QUALIFICATION_RESPONSE
+  GENERAL_INQUIRY
+  COMPLAINT
+  ACKNOWLEDGMENT
+  SENSITIVE
+}
+
+enum LeadStrengthTier {
+  STRONG
+  PROMISING
+  UNCERTAIN
+  WEAK
+  DISQUALIFIED
+}
+
 model Lead {
   id                   String                @id @default(cuid())
   organizationId       String
@@ -415,6 +443,7 @@ model Lead {
   notes                String?
   /// V4: when true, outbound automation (email/SMS) is paused — escalation or manual
   automationPaused     Boolean               @default(false)
+  automationMode       LeadAutomationMode    @default(AUTO)
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
 
@@ -436,6 +465,7 @@ model Lead {
   suggestedActions      AISuggestedAction[]
   escalationFlags       AIEscalationFlag[]
   prioritySignal        LeadPrioritySignal?
+  strengthSignal        LeadStrengthSignal?
   recommendations       PropertyRecommendation[]
 
   @@index([organizationId, inboxStage])
@@ -462,6 +492,29 @@ model ContactChannelIdentity {
   @@unique([leadId, channelType, handle])
   @@index([leadId])
   @@index([channelType, handle])
+}
+
+enum SmsConsentStatus {
+  OPTED_IN
+  OPTED_OUT
+}
+
+model SmsConsent {
+  id             String           @id @default(cuid())
+  organizationId String
+  phone          String
+  status         SmsConsentStatus @default(OPTED_IN)
+  optOutAt       DateTime?
+  optOutKeyword  String?
+  optInAt        DateTime?
+  metadata       Json             @default("{}")
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, phone])
+  @@index([phone])
 }
 
 model QualificationAnswer {
@@ -674,6 +727,8 @@ model Message {
 enum CommunicationEventType {
   DELIVERED
   BOUNCED
+  FAILED
+  UNDELIVERED
   OPENED
   CALL_COMPLETED
   NOTE
@@ -811,6 +866,7 @@ model AIReplyDraft {
   body             String             @db.Text
   suggestedChannel MessageChannel     @default(IN_APP)
   contextNote      String?
+  automationConfidence Float?
   status           AIReplyDraftStatus @default(SUGGESTED)
   reviewedByUserId String?
   reviewedAt       DateTime?
@@ -831,6 +887,30 @@ model AIReplyDraft {
   @@index([organizationId])
   @@index([leadId])
   @@index([conversationId, status])
+}
+
+/// Strength score for leasing readiness and automation posture.
+model LeadStrengthSignal {
+  id                 String            @id @default(cuid())
+  organizationId     String
+  leadId             String            @unique
+  strengthTier       LeadStrengthTier  @default(UNCERTAIN)
+  overallScore       Float
+  financialFitScore  Float
+  intentScore        Float
+  completenessScore  Float
+  budgetToRentRatio  Float?
+  latestIntent       InboundIntentType?
+  reasons            Json              @default("[]")
+  modelId            String?
+  computedAt         DateTime          @default(now())
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, strengthTier])
 }
 
 enum AISuggestedActionType {

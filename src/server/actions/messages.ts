@@ -1,11 +1,17 @@
 "use server";
 
+import { MessageChannel } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 
 import { requireOrgContext } from "@/server/auth/context";
 import { Permission } from "@/server/auth/permissions";
 import { requirePermission } from "@/server/auth/require-permission";
-import { logInboundPlaceholder, logOutboundMessage } from "@/server/services/communications/conversation.service";
+import {
+  getOrCreateLeadConversation,
+  logInboundPlaceholder,
+  logOutboundMessage,
+} from "@/server/services/communications/conversation.service";
+import { sendToProspect } from "@/server/services/outbound/dispatch.service";
 import { logOutboundMessageSchema } from "@/server/validation/message";
 
 export async function logOutboundMessageAction(_prev: unknown, formData: FormData) {
@@ -18,7 +24,22 @@ export async function logOutboundMessageAction(_prev: unknown, formData: FormDat
       body: formData.get("body"),
     };
     const input = logOutboundMessageSchema.parse(raw);
-    await logOutboundMessage(ctx, input);
+    if (input.channel === MessageChannel.SMS) {
+      const conversation = await getOrCreateLeadConversation(ctx, input.leadId);
+      await sendToProspect(ctx, {
+        leadId: input.leadId,
+        conversationId: conversation.id,
+        body: input.body,
+        preferredChannel: "SMS",
+        authorType: "USER",
+        authorUserId: ctx.userId,
+        isAiGenerated: false,
+        provider: "twilio",
+        fallbackLabel: "SMS not sent — no deliverable channel configured",
+      });
+    } else {
+      await logOutboundMessage(ctx, input);
+    }
     revalidatePath(`/leasing/leads/${input.leadId}`);
     return { ok: true as const };
   } catch (e) {

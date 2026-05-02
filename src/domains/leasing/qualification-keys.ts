@@ -6,6 +6,11 @@ export const QUALIFICATION_KEYS = [
   "monthlyBudget",
   "occupants",
   "propertyInterest",
+  "incomeRange",
+  "currentLeaseSituation",
+  "employmentType",
+  "creditSelfReport",
+  "moveInUrgency",
 ] as const;
 
 export type QualificationKey = (typeof QUALIFICATION_KEYS)[number];
@@ -17,4 +22,9 @@ export const QUALIFICATION_QUESTIONS: Record<QualificationKey, string> = {
   monthlyBudget: "What monthly rent budget are you targeting?",
   occupants: "How many people will be living in the home?",
   propertyInterest: "Are you interested in a specific property or neighborhood?",
+  incomeRange: "What is your approximate monthly income range?",
+  currentLeaseSituation: "What is your current lease situation and notice timeline?",
+  employmentType: "What is your current employment situation?",
+  creditSelfReport: "How would you describe your current credit profile?",
+  moveInUrgency: "How urgent is your move-in timeline?",
 };

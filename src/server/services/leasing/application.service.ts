@@ -3,6 +3,7 @@ import { ApplicationStatus, LeadInboxStage, LeadStatus, type Prisma } from "@pri
 import type { OrgContext } from "@/server/auth/context";
 import { prisma } from "@/server/db/client";
 import { recordActivity, type ActivitySourceContext } from "@/server/services/activity/activity.service";
+import { transitionOnApplicationStatus } from "@/server/services/leasing/stage-machine.service";
 import type {
   CreateApplicationInput,
   UpdateApplicationPipelineInput,
@@ -123,6 +124,7 @@ export async function updateApplicationStatus(ctx: OrgContext, input: UpdateAppl
       },
     });
   }
+  await transitionOnApplicationStatus(ctx, app.leadId, updated.status);
 
   return updated;
 }

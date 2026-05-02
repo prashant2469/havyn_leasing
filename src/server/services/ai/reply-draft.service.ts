@@ -10,11 +10,18 @@ import { ActivityVerbs } from "@/domains/activity/verbs";
 import type { OrgContext } from "@/server/auth/context";
 import { prisma } from "@/server/db/client";
 import { recordActivity } from "@/server/services/activity/activity.service";
-import { qualificationGapLabelsForLead } from "@/server/services/ai/copilot-qual-gaps";
-import { tryLlmReplyDraft } from "@/server/services/ai/llm/copilot-llm";
+import { generateContextualReply } from "@/server/services/ai/contextual-reply.service";
 import { sendToProspect } from "@/server/services/outbound/dispatch.service";
-import { getQualificationCompleteness } from "@/server/services/leasing/qualification-score.service";
-import { getFactsForAI } from "@/server/services/properties/property-fact.service";
+
+function compactSmsDraft(input: string, maxChars = 300): string {
+  const oneLine = input
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\n\n/g, "\n")
+    .trim();
+  if (oneLine.length <= maxChars) return oneLine;
+  return `${oneLine.slice(0, maxChars - 1).trimEnd()}…`;
+}
 
 async function _generateDraftBody(
   ctx: OrgContext,
@@ -25,79 +32,19 @@ async function _generateDraftBody(
   suggestedChannel: MessageChannel;
   contextNote: string;
   modelNote: string;
+  confidence: number;
 }> {
-  const conversation = await prisma.conversation.findUnique({
-    where: { id: conversationId },
-    include: {
-      messages: { orderBy: { sentAt: "asc" }, take: 15 },
-      lead: {
-        select: {
-          firstName: true,
-          lastName: true,
-          listing: { select: { title: true, unit: { select: { id: true, propertyId: true } } } },
-        },
-      },
-    },
+  const generated = await generateContextualReply(ctx, {
+    conversationId,
+    leadId,
   });
-
-  if (!conversation) throw new Error(`Conversation ${conversationId} not found`);
-
-  const firstName = conversation.lead?.firstName ?? "there";
-  const listingTitle = conversation.lead?.listing?.title;
-  const messageCount = conversation.messages.length;
-  const isFirstReply = messageCount <= 1;
-  const { score, missing } = await getQualificationCompleteness(leadId);
-  const gaps = await qualificationGapLabelsForLead(leadId);
-  const gapClause =
-    gaps.length > 0
-      ? `To help us match you${listingTitle ? ` with ${listingTitle}` : ""}, could you share: ${gaps.slice(0, 2).join(" · ")}?`
-      : "If anything about timing or budget has shifted, just let us know so we can keep options accurate.";
-
-  const body = isFirstReply
-    ? `Hi ${firstName},\n\nThanks for reaching out${listingTitle ? ` about ${listingTitle}` : ""}. We're on it and will help you find the right fit.\n\n${gapClause}\n\nWe typically reply within one business day — watch your inbox.`
-    : `Hi ${firstName},\n\nThanks for the update. We're noting everything on our side.\n\n${gapClause}\n\nIf you'd like to see the home in person, say the word and we'll send a few tour times that match the calendar.`;
-
-  const suggestedChannel: MessageChannel =
-    conversation.channelType === "EMAIL"
-      ? "EMAIL"
-      : conversation.channelType === "SMS"
-        ? "SMS"
-        : "IN_APP";
-
-  const contextNote = isFirstReply
-    ? `Heuristic draft (completeness ~${Math.round(score * 100)}%, ${missing.length} open fields).`
-    : "Heuristic follow-up — references qualification gaps when present.";
-
-  const transcript = conversation.messages.map((m) => `${m.direction}: ${m.body}`).join("\n");
-  const propertyId = conversation.lead?.listing?.unit?.propertyId ?? null;
-  const unitId = conversation.lead?.listing?.unit?.id ?? null;
-  const kb = propertyId ? await getFactsForAI(ctx, { propertyId, unitId, maxFacts: 20 }) : null;
-  const factHint =
-    kb && kb.facts.length > 0
-      ? `\n\nReference facts:\n${kb.facts
-          .slice(0, 3)
-          .map((f) => `- ${f.question}: ${f.answer}`)
-          .join("\n")}`
-      : "";
-
-  const llm = await tryLlmReplyDraft({
-    transcript,
-    firstName,
-    listingTitle: listingTitle ?? undefined,
-    heuristicBody: `${body}${factHint}`,
-    propertyFactsBlock: kb?.promptBlock,
-  });
-
-  if (llm) {
-    return {
-      body: llm.body,
-      suggestedChannel,
-      contextNote: [contextNote, llm.contextNote].filter(Boolean).join(" "),
-      modelNote: "openai-json",
-    };
-  }
-
-  return { body, suggestedChannel, contextNote, modelNote: "heuristic-v4" };
+  return {
+    body: generated.suggestedChannel === "SMS" ? compactSmsDraft(generated.body) : generated.body,
+    suggestedChannel: generated.suggestedChannel,
+    contextNote: generated.contextNote,
+    modelNote: generated.modelId,
+    confidence: generated.confidence,
+  };
 }
 
 export async function suggestReplyDraft(
@@ -126,6 +73,7 @@ export async function suggestReplyDraft(
       body: content.body,
       suggestedChannel: content.suggestedChannel,
       contextNote: content.contextNote,
+      automationConfidence: content.confidence,
       status: "SUGGESTED",
       modelId: content.modelNote,
       promptVersion: "v4.1",

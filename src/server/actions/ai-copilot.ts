@@ -107,6 +107,24 @@ export async function sendApprovedDraftAction(
   }
 }
 
+export async function approveAndSendDraftAction(
+  _prev: ActionResult<{ draftId: string; messageId: string }> | null,
+  formData: FormData,
+): Promise<ActionResult<{ draftId: string; messageId: string }>> {
+  try {
+    const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.AI_MANAGE);
+    const { draftId } = approveReplyDraftSchema.parse({ draftId: formData.get("draftId") });
+    await approveReplyDraft(ctx, draftId);
+    const { messageId } = await sendApprovedDraft(ctx, draftId);
+    revalidatePath("/leasing");
+    revalidatePath("/leasing/inbox");
+    return { success: true, data: { draftId, messageId } };
+  } catch (e) {
+    return { success: false, error: String(e instanceof Error ? e.message : e) };
+  }
+}
+
 export async function suggestReplyDraftAction(
   _prev: ActionResult<{ draftId: string }> | null,
   formData: FormData,

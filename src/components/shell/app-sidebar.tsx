@@ -4,16 +4,12 @@ import {
   Activity,
   BarChart3,
   Building2,
-  ClipboardList,
+  Calendar,
   FileText,
   Inbox,
   LayoutList,
   type LucideIcon,
-  ListOrdered,
-  MessageSquare,
   Settings,
-  Sparkles,
-  Users,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -32,22 +28,15 @@ import {
 } from "@/components/ui/sidebar";
 
 const primaryNav = [
-  { href: "/leasing", label: "Leasing", icon: Inbox },
+  { href: "/leasing", label: "Command center", icon: Inbox },
+  { href: "/leasing/inbox", label: "Pipeline board", icon: LayoutList },
+  { href: "/leasing/calendar", label: "Calendar", icon: Calendar },
   { href: "/listings", label: "Listings", icon: LayoutList },
-  { href: "/properties", label: "Portfolio", icon: Building2 },
+  { href: "/properties", label: "Properties", icon: Building2 },
   { href: "/leases", label: "Leases", icon: FileText },
   { href: "/analysis", label: "Analysis", icon: BarChart3 },
+  { href: "/activity", label: "Activity log", icon: Activity },
   { href: "/settings", label: "Settings", icon: Settings },
-];
-
-const secondaryNav = [
-  { href: "/leasing/inbox", label: "Inbox", icon: Inbox },
-  { href: "/leasing/leads", label: "Leads", icon: Users },
-  { href: "/leasing/applications", label: "Applications", icon: ClipboardList },
-  { href: "/tours", label: "Tours", icon: ListOrdered },
-  { href: "/communications", label: "Communications", icon: MessageSquare },
-  { href: "/ai", label: "AI copilot", icon: Sparkles },
-  { href: "/activity", label: "Activity", icon: Activity },
 ];
 
 function NavList({
@@ -105,12 +94,6 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <SidebarGroup>
-          <SidebarGroupLabel>Leasing tools</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <NavList items={secondaryNav} pathname={pathname} />
-          </SidebarGroupContent>
-        </SidebarGroup>
       </SidebarContent>
       <SidebarRail />
     </Sidebar>

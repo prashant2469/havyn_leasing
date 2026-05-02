@@ -4,9 +4,9 @@ import { addHours } from "date-fns";
 import { ActivityVerbs } from "@/domains/activity/verbs";
 import type { OrgContext } from "@/server/auth/context";
 import { prisma } from "@/server/db/client";
-import { enqueueLeadFollowUpDue } from "@/server/jobs/events";
 import { recordActivity } from "@/server/services/activity/activity.service";
 import { sendToProspect } from "@/server/services/outbound/dispatch.service";
+import { transitionAfterTourCompleted, transitionAfterTourBooked } from "@/server/services/leasing/stage-machine.service";
 import { scheduleTourReminders } from "@/server/services/tours/tour-reminders.service";
 import {
   deleteGoogleTourEvent,
@@ -68,13 +68,13 @@ export async function createTour(ctx: OrgContext, input: CreateTourInput) {
   await prisma.lead.update({
     where: { id: input.leadId },
     data: {
-      inboxStage: LeadInboxStage.TOUR_SCHEDULED,
       tourBookedAt: lead.tourBookedAt ?? new Date(),
       ...(lead.status === LeadStatus.NEW || lead.status === LeadStatus.CONTACTED
         ? { status: LeadStatus.TOURING }
         : {}),
     },
   });
+  await transitionAfterTourBooked(ctx, input.leadId);
 
   try {
     await scheduleTourReminders({
@@ -135,13 +135,10 @@ export async function updateTourStatus(ctx: OrgContext, input: UpdateTourStatusI
   });
 
   if (tour.status !== updated.status && updated.status === TourStatus.COMPLETED) {
+    await transitionAfterTourCompleted(ctx, tour.leadId);
     await prisma.lead.update({
       where: { id: tour.leadId },
-      data: {
-        inboxStage: LeadInboxStage.APPLICATION_STARTED,
-        nextActionAt: addHours(new Date(), 48),
-        nextActionType: NextActionType.FOLLOW_UP,
-      },
+      data: { nextActionAt: addHours(new Date(), 48), nextActionType: NextActionType.FOLLOW_UP },
     });
 
     const conversation = await prisma.conversation.findFirst({
@@ -172,18 +169,6 @@ export async function updateTourStatus(ctx: OrgContext, input: UpdateTourStatusI
         nextActionType: NextActionType.FOLLOW_UP,
       },
     });
-    const conversation = await prisma.conversation.findFirst({
-      where: { organizationId: ctx.organizationId, leadId: tour.leadId },
-      select: { id: true },
-    });
-    await enqueueLeadFollowUpDue(
-      {
-        organizationId: ctx.organizationId,
-        leadId: tour.leadId,
-        conversationId: conversation?.id ?? null,
-      },
-      followUpAt,
-    );
   }
 
   return updated;

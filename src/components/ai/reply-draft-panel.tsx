@@ -19,6 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { replyDraftStatusColor, replyDraftStatusLabel } from "@/domains/ai/constants";
 import {
+  approveAndSendDraftAction,
   approveReplyDraftAction,
   rejectReplyDraftAction,
   sendApprovedDraftAction,
@@ -46,6 +47,10 @@ export function ReplyDraftPanel({ draft: initialDraft, conversationId, onSent }:
     null,
   );
   const [sendState, sendAction, sendPending] = useActionState(sendApprovedDraftAction, null);
+  const [approveSendState, approveSendAction, approveSendPending] = useActionState(
+    approveAndSendDraftAction,
+    null,
+  );
 
   // Use latest draft from any action result, fall back to initial
   const activeDraft = initialDraft;
@@ -55,11 +60,11 @@ export function ReplyDraftPanel({ draft: initialDraft, conversationId, onSent }:
 
   const sentRef = useRef(false);
   useEffect(() => {
-    if (sendState?.success && !sentRef.current) {
+    if ((sendState?.success || approveSendState?.success) && !sentRef.current) {
       sentRef.current = true;
       onSent?.();
     }
-  }, [sendState?.success, onSent]);
+  }, [sendState?.success, approveSendState?.success, onSent]);
 
   return (
     <Card className="border-border/60">
@@ -117,7 +122,7 @@ export function ReplyDraftPanel({ draft: initialDraft, conversationId, onSent }:
               Channel: <span className="font-medium">{activeDraft.suggestedChannel}</span>
             </div>
 
-            {[approveState, rejectState, sendState].map((s, i) =>
+            {[approveState, rejectState, sendState, approveSendState].map((s, i) =>
               s && !s.success ? (
                 <p key={i} className="text-destructive text-xs">
                   {s.error}
@@ -126,7 +131,7 @@ export function ReplyDraftPanel({ draft: initialDraft, conversationId, onSent }:
             )}
 
             {!isApproved ? (
-              <div className="flex gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <form action={approveAction} className="flex-1">
                   <input type="hidden" name="draftId" value={activeDraft.id} />
                   <Button
@@ -141,6 +146,23 @@ export function ReplyDraftPanel({ draft: initialDraft, conversationId, onSent }:
                       <ThumbsUp className="h-3.5 w-3.5" />
                     )}
                     Approve
+                  </Button>
+                </form>
+                <form action={approveSendAction} className="flex-1">
+                  <input type="hidden" name="draftId" value={activeDraft.id} />
+                  <Button
+                    type="submit"
+                    size="sm"
+                    variant="secondary"
+                    className="w-full gap-2"
+                    disabled={approveSendPending}
+                  >
+                    {approveSendPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Send className="h-3.5 w-3.5" />
+                    )}
+                    Approve & send
                   </Button>
                 </form>
                 <form action={rejectAction} className="flex-1">

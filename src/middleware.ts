@@ -5,7 +5,6 @@ export default function middleware(req: NextRequest) {
   if (
     path.startsWith("/login") ||
     path.startsWith("/r/") ||
-    path.startsWith("/api/inngest") ||
     path === "/favicon.ico" ||
     path === "/havyn-theme-boot.js"
   ) {

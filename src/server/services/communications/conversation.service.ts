@@ -39,7 +39,10 @@ export async function listMessagesForLead(ctx: OrgContext, leadId: string) {
     include: {
       messages: {
         orderBy: { sentAt: "asc" },
-        include: { authorUser: { select: { id: true, name: true, email: true } } },
+        include: {
+          authorUser: { select: { id: true, name: true, email: true } },
+          events: { orderBy: { occurredAt: "desc" }, take: 5 },
+        },
       },
     },
   });
@@ -57,6 +60,7 @@ export async function logOutboundAutomationMessage(
     authorUserId?: string | null;
     isAiGenerated?: boolean;
     provider?: string | null;
+    externalId?: string | null;
     channelMetadata?: Prisma.InputJsonValue;
     automation?: boolean;
   },
@@ -71,6 +75,7 @@ export async function logOutboundAutomationMessage(
       authorUserId: input.authorUserId === undefined ? ctx.userId : input.authorUserId,
       isAiGenerated: input.isAiGenerated ?? true,
       provider: input.provider ?? null,
+      externalId: input.externalId ?? null,
       channelMetadata: input.channelMetadata ?? Prisma.JsonNull,
     },
   });

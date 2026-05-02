@@ -8,6 +8,7 @@ import {
   ConversationReplyMode,
   ConversationSummary,
   LeadInboxStage,
+  MessageChannel,
   LeadPrioritySignal,
   ListingChannelType,
   NextActionType,
@@ -15,8 +16,8 @@ import {
   type LeadStatus,
 } from "@prisma/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import Link from "next/link";
 import { useActionState, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { ConversationSummaryCard } from "@/components/ai/conversation-summary-card";
 import { EscalationBadge } from "@/components/ai/escalation-badge";
@@ -25,8 +26,12 @@ import { QualificationSnapshot } from "@/components/ai/qualification-snapshot";
 import { ReplyDraftPanel } from "@/components/ai/reply-draft-panel";
 import { SuggestedActionCard } from "@/components/ai/suggested-action-card";
 import { ConversationThread } from "@/components/communications/conversation-thread";
+import { RecommendationCard } from "@/components/recommendations/recommendation-card";
+import { LeadTimeline } from "@/components/timeline/lead-timeline";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Sheet,
@@ -48,12 +53,21 @@ import {
   stagesForInboxNavId,
 } from "@/domains/leasing/inbox";
 import { channelTypeIcon, channelTypeLabel } from "@/domains/listings/constants";
+import type { TimelineEntry } from "@/domains/timeline/types";
 import { cn } from "@/lib/utils";
 import { updateConversationReplyModeAction } from "@/server/actions/channel";
-import { updateLeadInboxStageAction } from "@/server/actions/leads";
+import {
+  setLeadAutomationPausedAction,
+  updateLeadContactAction,
+  updateLeadInboxStageAction,
+} from "@/server/actions/leads";
 import { logOutboundMessageAction } from "@/server/actions/messages";
 
+import { QuickActionsBar } from "../leads/[id]/quick-actions-bar";
+
 type LeadBrief = {
+  // Use literal unions to avoid tight coupling to generated enum exports.
+  automationMode: "AUTO" | "DRAFT_REVIEW" | "MANUAL";
   id: string;
   firstName: string;
   lastName: string;
@@ -70,24 +84,31 @@ type LeadBrief = {
   lastResponseAt: string | null;
   sourceChannelType: ListingChannelType | null;
   listing: { id: string; title: string } | null;
-  primaryUnit: { unitNumber: string } | null;
+  primaryUnit: { id: string; unitNumber: string } | null;
   tours: { id: string; scheduledAt: string; status: string }[];
   applications: { id: string; status: ApplicationStatus }[];
+  followUpCount: number;
   prioritySignal: {
     priorityTier: string;
     isAtRisk: boolean;
     needsImmediateResponse: boolean;
   } | null;
+  strengthSignal?: {
+    strengthTier: "STRONG" | "PROMISING" | "UNCERTAIN" | "WEAK" | "DISQUALIFIED";
+    overallScore: number;
+  } | null;
+  replyDrafts?: Array<{ id: string; status: "SUGGESTED" | "APPROVED" }>;
   escalationFlags: { id: string }[];
   _count?: { recommendations: number };
 };
 
-type WorkQueueFilter = "all" | "needs_attention";
+type WorkQueueFilter = "all" | "needs_attention" | "draft_review";
 
 const NO_FIRST_REPLY_STALE_MS = 2 * 60 * 60 * 1000;
 
 function leadMatchesWorkQueue(l: LeadBrief, f: WorkQueueFilter): boolean {
   if (f === "all") return true;
+  if (f === "draft_review") return (l.replyDrafts?.length ?? 0) > 0;
   return leadNeedsAttention(l);
 }
 
@@ -174,6 +195,7 @@ type MessageRow = {
   authorType: string;
   isAiGenerated: boolean;
   authorUser?: { name: string | null; email: string } | null;
+  events?: Array<{ id: string; type: string; occurredAt: string }>;
 };
 
 type ActivityRow = {
@@ -218,10 +240,15 @@ type LeadDetail = {
       id: string;
       title: string;
       status: string;
-      unit: { unitNumber: string; property: { name: string } };
+      publicSlug: string | null;
+      monthlyRent: unknown;
+      organization: { slug: string };
+      unit: { id: string; unitNumber: string; property: { name: string } };
     } | null;
     tours: { id: string; scheduledAt: string; status: string; notes: string | null }[];
+    applications: Array<{ id: string; status: ApplicationStatus; lease: { id: string; status: string } | null }>;
     qualifications: { id: string; key: string; value: unknown; source: string }[];
+    followUpCount: number;
   };
   conversation: {
     id: string;
@@ -231,7 +258,26 @@ type LeadDetail = {
     messages: MessageRow[];
   } | null;
   activities: ActivityRow[];
+  timeline: TimelineEntry[];
+  recommendations: Array<{
+    id: string;
+    leadId: string;
+    score: number;
+    status: string;
+    factors: unknown;
+    listing: {
+      id: string;
+      title: string;
+      monthlyRent: unknown;
+      bedrooms: number | null;
+      bathrooms: number | null;
+      availableFrom: string | null;
+      unit: { unitNumber: string; property: { name: string } };
+    };
+  }>;
+  units: Array<{ id: string; unitNumber: string; property: { name: string } }>;
   aiActions: AIActionBrief[];
+  smsConsent: { status: "OPTED_IN" | "OPTED_OUT"; optOutAt: string | null; optOutKeyword: string | null } | null;
   replyStrategy: ReplyStrategy | null;
   copilotContext: CopilotContext | null;
 };
@@ -292,12 +338,31 @@ function cardAccentClass(stage: InboxNavId) {
   return "border-l-slate-500";
 }
 
+function strengthDotClass(
+  tier: "STRONG" | "PROMISING" | "UNCERTAIN" | "WEAK" | "DISQUALIFIED" | null | undefined,
+): string {
+  if (tier === "STRONG") return "bg-emerald-500";
+  if (tier === "PROMISING") return "bg-blue-500";
+  if (tier === "UNCERTAIN") return "bg-slate-400";
+  if (tier === "WEAK") return "bg-amber-500";
+  if (tier === "DISQUALIFIED") return "bg-rose-500";
+  return "bg-slate-300";
+}
+
 export function LeasingInboxClient() {
   const qc = useQueryClient();
+  const searchParams = useSearchParams();
   const [channelFilter, setChannelFilter] = useState<ListingChannelType | "ALL">("ALL");
   const [workQueueFilter, setWorkQueueFilter] = useState<WorkQueueFilter>("needs_attention");
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+
+  useEffect(() => {
+    const leadId = searchParams.get("leadId");
+    if (!leadId) return;
+    setSelectedLeadId(leadId);
+    setSheetOpen(true);
+  }, [searchParams]);
 
   const leadsQuery = useQuery({
     queryKey: ["leads", "inbox-board", channelFilter],
@@ -325,6 +390,10 @@ export function LeasingInboxClient() {
       return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
     });
   }, [leadsRaw, workQueueFilter]);
+  const draftReviewCount = useMemo(
+    () => leadsRaw.filter((l) => (l.replyDrafts?.length ?? 0) > 0).length,
+    [leadsRaw],
+  );
 
   const leadsByStage = useMemo(() => {
     const map: Record<InboxNavId, LeadBrief[]> = {
@@ -375,6 +444,14 @@ export function LeasingInboxClient() {
           onClick={() => setWorkQueueFilter("all")}
         >
           Show all
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={workQueueFilter === "draft_review" ? "default" : "outline"}
+          onClick={() => setWorkQueueFilter("draft_review")}
+        >
+          Draft review ({draftReviewCount})
         </Button>
         <div className="ml-auto w-full sm:w-52">
           <select
@@ -448,9 +525,18 @@ export function LeasingInboxClient() {
                               )}
                             >
                               <div className="flex items-start justify-between gap-1">
-                                <p className="truncate text-sm font-semibold">
-                                  {lead.firstName} {lead.lastName}
-                                </p>
+                                <div className="flex min-w-0 items-center gap-1">
+                                  <span
+                                    className={cn(
+                                      "h-2 w-2 shrink-0 rounded-full",
+                                      strengthDotClass(lead.strengthSignal?.strengthTier),
+                                    )}
+                                    title={lead.strengthSignal?.strengthTier ?? "Strength pending"}
+                                  />
+                                  <p className="truncate text-sm font-semibold">
+                                    {lead.firstName} {lead.lastName}
+                                  </p>
+                                </div>
                                 {hasEscalation ? (
                                   <span
                                     className="h-2 w-2 shrink-0 rounded-full bg-red-500"
@@ -477,6 +563,20 @@ export function LeasingInboxClient() {
                                   </span>
                                 ) : null}
                                 <ChannelBadge channelType={lead.sourceChannelType} />
+                                <span className="rounded bg-slate-100 px-1 py-0 text-[9px] font-medium text-slate-700 dark:bg-slate-900/30 dark:text-slate-200">
+                                  {lead.automationPaused
+                                    ? "Paused"
+                                    : lead.automationMode === "MANUAL"
+                                      ? "Manual"
+                                      : lead.automationMode === "DRAFT_REVIEW"
+                                        ? "Draft"
+                                        : "Auto"}
+                                </span>
+                                {(lead.replyDrafts?.length ?? 0) > 0 ? (
+                                  <span className="rounded bg-indigo-100 px-1 py-0 text-[9px] font-medium text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+                                    Review draft
+                                  </span>
+                                ) : null}
                               </div>
                               {priority && priority.priorityTier !== "NORMAL" ? (
                                 <div className="mt-2">
@@ -511,7 +611,7 @@ export function LeasingInboxClient() {
       )}
 
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <SheetContent side="right" className="w-full sm:max-w-3xl" showCloseButton>
+        <SheetContent side="right" className="w-full sm:max-w-6xl" showCloseButton>
           <SheetHeader className="border-b px-4 py-3">
             {!selectedLeadId ? (
               <>
@@ -545,21 +645,19 @@ export function LeasingInboxClient() {
           ) : !detail ? (
             <div className="p-4 text-sm text-muted-foreground">Could not load lead context.</div>
           ) : (
-            <div className="grid min-h-0 flex-1 gap-0 md:grid-cols-[1fr_300px]">
+            <div className="grid min-h-0 flex-1 gap-0 md:grid-cols-[1.2fr_1fr]">
               <section className="border-border flex min-h-0 flex-col border-r">
                 <div className="border-border flex items-center gap-2 border-b px-3 py-2">
                   <Badge variant="secondary">{leadStatusLabel[detail.lead.status]}</Badge>
                   <Badge variant="outline">{inboxStageLabel[detail.lead.inboxStage]}</Badge>
-                  {detail.lead.sourceChannelType && (
+                  {detail.lead.sourceChannelType ? (
                     <ChannelBadge channelType={detail.lead.sourceChannelType} />
-                  )}
+                  ) : null}
                   <div className="ml-auto flex items-center gap-2">
-                    {detail.conversation?.channelType && (
+                    {detail.conversation?.channelType ? (
                       <ChannelBadge channelType={detail.conversation.channelType} />
-                    )}
-                    {detail.conversation ? (
-                      <ReplyModeBadge mode={detail.conversation.replyMode} />
                     ) : null}
+                    {detail.conversation ? <ReplyModeBadge mode={detail.conversation.replyMode} /> : null}
                   </div>
                 </div>
 
@@ -571,18 +669,27 @@ export function LeasingInboxClient() {
 
                 <ScrollArea className="flex-1 p-3">
                   <div className="space-y-4">
-                    <ConversationThread messages={detail.conversation?.messages ?? []} />
-                    <Link
-                      href={`/leasing/leads/${detail.lead.id}`}
-                      className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-                    >
-                      Open full workspace
-                    </Link>
+                    <div className="rounded-md border border-border/70 bg-background p-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Unified timeline
+                      </p>
+                      <LeadTimeline entries={detail.timeline} />
+                    </div>
+                    <details className="rounded-md border border-border/70 bg-background p-3">
+                      <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Conversation thread
+                      </summary>
+                      <div className="mt-3">
+                        <ConversationThread messages={detail.conversation?.messages ?? []} />
+                      </div>
+                    </details>
                   </div>
                 </ScrollArea>
 
                 <InlineOutboundComposer
                   leadId={detail.lead.id}
+                  phone={detail.lead.phone}
+                  smsConsentStatus={detail.smsConsent?.status ?? null}
                   onDone={() => {
                     void qc.invalidateQueries({ queryKey: ["lead-detail", detail.lead.id] });
                     void qc.invalidateQueries({ queryKey: ["leads", "inbox-board"] });
@@ -593,6 +700,69 @@ export function LeasingInboxClient() {
               <aside className="bg-muted/10 min-h-0">
                 <ScrollArea className="h-full p-3">
                   <div className="space-y-3 text-sm">
+                    <QuickActionsBar
+                      lead={{
+                        id: detail.lead.id,
+                        firstName: detail.lead.firstName,
+                        lastName: detail.lead.lastName,
+                        email: detail.lead.email,
+                        phone: detail.lead.phone,
+                        status: detail.lead.status,
+                        primaryUnitId: detail.lead.primaryUnit?.id ?? null,
+                        listing: detail.lead.listing
+                          ? {
+                              id: detail.lead.listing.id,
+                              publicSlug: detail.lead.listing.publicSlug,
+                              organizationSlug: detail.lead.listing.organization.slug,
+                              monthlyRent: String(detail.lead.listing.monthlyRent ?? ""),
+                              unit: { id: detail.lead.listing.unit.id },
+                            }
+                          : null,
+                        tours: detail.lead.tours.map((t) => ({ id: t.id })),
+                      }}
+                      application={detail.lead.applications?.[0] ?? null}
+                      units={detail.units.map((u) => ({
+                        id: u.id,
+                        unitNumber: u.unitNumber,
+                        propertyName: u.property.name,
+                      }))}
+                      onDone={() => {
+                        void qc.invalidateQueries({ queryKey: ["leads", "inbox-board"] });
+                        void qc.invalidateQueries({ queryKey: ["lead-detail", detail.lead.id] });
+                      }}
+                    />
+
+                    <LeadContactMiniForm
+                      leadId={detail.lead.id}
+                      firstName={detail.lead.firstName}
+                      lastName={detail.lead.lastName}
+                      email={detail.lead.email}
+                      phone={detail.lead.phone}
+                      onDone={() => {
+                        void qc.invalidateQueries({ queryKey: ["leads", "inbox-board"] });
+                        void qc.invalidateQueries({ queryKey: ["lead-detail", detail.lead.id] });
+                      }}
+                    />
+
+                    <AutomationStatusCard
+                      leadId={detail.lead.id}
+                      automationPaused={detail.lead.automationPaused}
+                      followUpCount={detail.lead.followUpCount}
+                      nextActionAt={detail.lead.nextActionAt}
+                      nextActionType={detail.lead.nextActionType}
+                      onDone={() => {
+                        void qc.invalidateQueries({ queryKey: ["leads", "inbox-board"] });
+                        void qc.invalidateQueries({ queryKey: ["lead-detail", detail.lead.id] });
+                      }}
+                    />
+
+                    <QualificationProgressCard
+                      qualifications={detail.lead.qualifications}
+                      tours={detail.lead.tours}
+                      applications={detail.lead.applications ?? []}
+                      recommendations={detail.recommendations}
+                    />
+
                     {detail.conversation ? (
                       <ConversationSummaryCard
                         summary={detail.copilotContext?.summary ?? null}
@@ -616,6 +786,36 @@ export function LeasingInboxClient() {
                       <EscalationBadge flags={detail.copilotContext.openEscalations} />
                     ) : null}
 
+                    {detail.recommendations.length > 0 ? (
+                      <details className="rounded-md border border-border/60 bg-background p-2">
+                        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          Top recommendations
+                        </summary>
+                        <div className="mt-3 space-y-2">
+                          {detail.recommendations.slice(0, 3).map((rec) => (
+                            <RecommendationCard
+                              key={rec.id}
+                              recommendation={{
+                                ...rec,
+                                status: rec.status as
+                                  | "SUGGESTED"
+                                  | "SHARED_WITH_PROSPECT"
+                                  | "PROSPECT_INTERESTED"
+                                  | "DISMISSED",
+                                listing: {
+                                  ...rec.listing,
+                                  monthlyRent: String(rec.listing.monthlyRent),
+                                },
+                              }}
+                              onDone={() => {
+                                void qc.invalidateQueries({ queryKey: ["lead-detail", detail.lead.id] });
+                              }}
+                            />
+                          ))}
+                        </div>
+                      </details>
+                    ) : null}
+
                     <details open className="rounded-md border border-border/60 bg-background p-2">
                       <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         Reply tools
@@ -630,11 +830,9 @@ export function LeasingInboxClient() {
                             }}
                           />
                         ) : null}
-
                         {detail.copilotContext ? (
                           <SuggestedActionCard actions={detail.copilotContext.pendingActions} />
                         ) : null}
-
                         {detail.conversation ? (
                           <ReplyModeForm
                             key={`${detail.conversation.id}-${detail.conversation.replyMode}`}
@@ -645,7 +843,6 @@ export function LeasingInboxClient() {
                             }}
                           />
                         ) : null}
-
                         <InboxMoveForm
                           key={`${detail.lead.id}-${detail.lead.inboxStage}`}
                           leadId={detail.lead.id}
@@ -655,67 +852,6 @@ export function LeasingInboxClient() {
                             void qc.invalidateQueries({ queryKey: ["lead-detail", detail.lead.id] });
                           }}
                         />
-                      </div>
-                    </details>
-
-                    <details className="rounded-md border border-border/60 bg-background p-2">
-                      <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        Qualification and listing
-                      </summary>
-                      <div className="mt-3 space-y-3">
-                        {detail.copilotContext ? (
-                          <QualificationSnapshot qualifications={detail.copilotContext.qualifications} />
-                        ) : null}
-                        <div>
-                          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                            Listing
-                          </p>
-                          {detail.lead.listing ? (
-                            <p>
-                              {detail.lead.listing.title}
-                              <span className="block text-xs text-muted-foreground">
-                                {detail.lead.listing.unit.property.name} ·{" "}
-                                {detail.lead.listing.unit.unitNumber}
-                              </span>
-                            </p>
-                          ) : (
-                            <p className="text-xs text-muted-foreground">No listing linked.</p>
-                          )}
-                        </div>
-                        {detail.lead.tours.length > 0 ? (
-                          <div>
-                            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                              Tours
-                            </p>
-                            <ul className="space-y-1 text-xs">
-                              {detail.lead.tours.map((t) => (
-                                <li key={t.id}>
-                                  {new Date(t.scheduledAt).toLocaleString(undefined, {
-                                    dateStyle: "short",
-                                    timeStyle: "short",
-                                  })}{" "}
-                                  · {t.status}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        ) : null}
-                      </div>
-                    </details>
-
-                    <details className="rounded-md border border-border/60 bg-background p-2">
-                      <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        Activity
-                      </summary>
-                      <div className="mt-3">
-                        <ul className="max-h-40 space-y-1 overflow-auto text-xs">
-                          {detail.activities.slice(0, 12).map((a) => (
-                            <li key={a.id} className="text-muted-foreground">
-                              <span className="font-mono text-foreground">{a.verb}</span> ·{" "}
-                              {new Date(a.createdAt).toLocaleString()}
-                            </li>
-                          ))}
-                        </ul>
                       </div>
                     </details>
                   </div>
@@ -729,29 +865,211 @@ export function LeasingInboxClient() {
   );
 }
 
-function InlineOutboundComposer({ leadId, onDone }: { leadId: string; onDone: () => void }) {
+function InlineOutboundComposer({
+  leadId,
+  phone,
+  smsConsentStatus,
+  onDone,
+}: {
+  leadId: string;
+  phone: string | null;
+  smsConsentStatus: "OPTED_IN" | "OPTED_OUT" | null;
+  onDone: () => void;
+}) {
   const [state, action, pending] = useActionState(logOutboundMessageAction, null);
+  const [channel, setChannel] = useState<MessageChannel>(MessageChannel.EMAIL);
+  const [body, setBody] = useState("");
   useEffect(() => {
     if (state?.ok) onDone();
   }, [state?.ok, onDone]);
+
+  const charCount = body.length;
+  const segments = Math.max(1, Math.ceil(Math.max(charCount, 1) / 160));
+  const smsDisabled = channel === MessageChannel.SMS && (!phone || smsConsentStatus === "OPTED_OUT");
 
   return (
     <div className="border-border border-t p-3">
       <form action={action} className="space-y-2">
         <input type="hidden" name="leadId" value={leadId} />
-        <input type="hidden" name="channel" value="EMAIL" />
-        <Textarea name="body" rows={3} placeholder="Write a quick follow-up..." required />
+        <div className="flex items-center gap-2">
+          <Label htmlFor={`outbound-channel-${leadId}`} className="text-xs">
+            Channel
+          </Label>
+          <select
+            id={`outbound-channel-${leadId}`}
+            name="channel"
+            className="border-input bg-background h-8 rounded-md border px-2 text-xs"
+            value={channel}
+            onChange={(e) => setChannel(e.target.value as MessageChannel)}
+          >
+            <option value={MessageChannel.EMAIL}>Email</option>
+            <option value={MessageChannel.SMS} disabled={smsConsentStatus === "OPTED_OUT"}>
+              SMS
+            </option>
+            <option value={MessageChannel.IN_APP}>In-app</option>
+          </select>
+        </div>
+        {channel === MessageChannel.SMS ? (
+          <div className="rounded-md border border-border/60 bg-muted/20 p-2 text-xs text-muted-foreground">
+            <p>
+              Sending to: <span className="font-medium text-foreground">{phone ?? "No phone on file"}</span>
+            </p>
+            <p>
+              SMS length: {charCount} chars ({segments} segment{segments > 1 ? "s" : ""})
+            </p>
+            {smsConsentStatus === "OPTED_OUT" ? (
+              <p className="text-destructive">SMS blocked: prospect opted out (STOP).</p>
+            ) : null}
+          </div>
+        ) : null}
+        <Textarea
+          name="body"
+          rows={3}
+          placeholder="Write a quick follow-up..."
+          required
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+        />
         <div className="flex items-center justify-between gap-2">
           {state && !state.ok ? (
             <p className="text-destructive text-xs">{state.message}</p>
           ) : (
-            <span className="text-muted-foreground text-xs">Sends as outbound email log.</span>
+            <span className="text-muted-foreground text-xs">Logs outbound communication to timeline.</span>
           )}
-          <Button type="submit" size="sm" disabled={pending}>
+          <Button type="submit" size="sm" disabled={pending || smsDisabled}>
             {pending ? "Sending..." : "Send"}
           </Button>
         </div>
       </form>
+    </div>
+  );
+}
+
+function LeadContactMiniForm({
+  leadId,
+  firstName,
+  lastName,
+  email,
+  phone,
+  onDone,
+}: {
+  leadId: string;
+  firstName: string;
+  lastName: string;
+  email: string | null;
+  phone: string | null;
+  onDone: () => void;
+}) {
+  const [state, action, pending] = useActionState(updateLeadContactAction, null);
+  useEffect(() => {
+    if (state?.ok) onDone();
+  }, [state?.ok, onDone]);
+
+  return (
+    <form action={action} className="space-y-2 rounded-md border border-border/60 bg-background p-3">
+      <input type="hidden" name="leadId" value={leadId} />
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Contact</p>
+      <div className="grid grid-cols-2 gap-2">
+        <Input name="firstName" defaultValue={firstName} required />
+        <Input name="lastName" defaultValue={lastName} required />
+      </div>
+      <Input name="email" defaultValue={email ?? ""} placeholder="Email" />
+      <Input name="phone" defaultValue={phone ?? ""} placeholder="Phone" />
+      <Button type="submit" size="sm" variant="secondary" disabled={pending}>
+        {pending ? "Saving..." : "Save contact"}
+      </Button>
+      {state && !state.ok ? <p className="text-destructive text-xs">{state.message}</p> : null}
+    </form>
+  );
+}
+
+function AutomationStatusCard({
+  leadId,
+  automationPaused,
+  followUpCount,
+  nextActionAt,
+  nextActionType,
+  onDone,
+}: {
+  leadId: string;
+  automationPaused: boolean;
+  followUpCount: number;
+  nextActionAt: string | null;
+  nextActionType: NextActionType | null;
+  onDone: () => void;
+}) {
+  const [state, action, pending] = useActionState(setLeadAutomationPausedAction, null);
+  useEffect(() => {
+    if (state?.ok) onDone();
+  }, [state?.ok, onDone]);
+
+  return (
+    <div className="space-y-2 rounded-md border border-border/60 bg-background p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Automation status</p>
+      <p className="text-xs">
+        {automationPaused ? "Paused by team or escalation." : "Active. Follow-up rules can send automated nudges."}
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Follow-ups sent: {followUpCount}
+        {nextActionAt ? ` · Next: ${new Date(nextActionAt).toLocaleString()}` : ""}
+        {nextActionType ? ` (${nextActionType})` : ""}
+      </p>
+      <form action={action}>
+        <input type="hidden" name="leadId" value={leadId} />
+        <input type="hidden" name="paused" value={automationPaused ? "false" : "true"} />
+        <Button type="submit" size="sm" variant="outline" disabled={pending}>
+          {pending ? "Updating..." : automationPaused ? "Resume automation" : "Pause automation"}
+        </Button>
+      </form>
+      {state && !state.ok ? <p className="text-destructive text-xs">{state.message}</p> : null}
+    </div>
+  );
+}
+
+function QualificationProgressCard({
+  qualifications,
+  tours,
+  applications,
+  recommendations,
+}: {
+  qualifications: Array<{ key: string; value: unknown }>;
+  tours: Array<{ id: string; scheduledAt: string; status: string }>;
+  applications: Array<{ id: string; status: ApplicationStatus }>;
+  recommendations: Array<{ id: string }>;
+}) {
+  const requiredKeys = [
+    "moveInDate",
+    "bedrooms",
+    "monthlyBudget",
+    "pets",
+    "occupants",
+  ];
+  const answeredKeys = qualifications
+    .filter((q) => requiredKeys.includes(q.key) && q.value !== null && q.value !== "")
+    .map((q) => q.key);
+  const uniqueAnswered = Array.from(new Set(answeredKeys));
+  const missing = requiredKeys.filter((key) => !uniqueAnswered.includes(key));
+  const pct = Math.round((uniqueAnswered.length / requiredKeys.length) * 100);
+
+  return (
+    <div className="space-y-2 rounded-md border border-border/60 bg-background p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Qualification + next actions
+      </p>
+      <div className="space-y-1">
+        <p className="text-xs">
+          Qualification completeness: {uniqueAnswered.length}/{requiredKeys.length} ({pct}%)
+        </p>
+        <div className="h-2 rounded bg-muted">
+          <div className="h-2 rounded bg-primary" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Missing: {missing.length ? missing.join(", ") : "none"}
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Tours: {tours.length} · Applications: {applications.length} · Recommendations: {recommendations.length}
+      </p>
     </div>
   );
 }

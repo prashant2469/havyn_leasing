@@ -1,6 +1,7 @@
 import {
   LeadInboxStage,
   LeadStatus,
+  ListingChannelType,
   MessageChannel,
   NextActionType,
   Prisma,
@@ -10,21 +11,30 @@ import { addHours } from "date-fns";
 import type { OrgContext } from "@/server/auth/context";
 import { prisma } from "@/server/db/client";
 import { logOutboundAutomationMessage } from "@/server/services/communications/conversation.service";
+import { evaluateAutomationDecision } from "@/server/services/ai/automation-decision.service";
+import { generateContextualReply } from "@/server/services/ai/contextual-reply.service";
+import { computeLeadStrength } from "@/server/services/ai/lead-strength.service";
 import { hasOpenEscalationFlags } from "@/server/services/escalation/escalation-rules.service";
 import { getNextQualificationPrompt } from "@/server/services/leasing/guided-qualification.service";
 import { getQualificationCompleteness } from "@/server/services/leasing/qualification-score.service";
-import { transitionAfterFirstOutreach } from "@/server/services/leasing/stage-machine.service";
+import {
+  transitionAfterFirstOutreach,
+  transitionOnProspectReply,
+  transitionOnQualificationThreshold,
+} from "@/server/services/leasing/stage-machine.service";
 import { getBusyRangesForProperty } from "@/server/services/tours/availability.service";
 import { generateAvailableTourSlots } from "@/server/services/tours/slot-generator.service";
 import { sendTransactionalEmail } from "@/server/services/outbound/resend.service";
 import { sendTransactionalSms } from "@/server/services/outbound/twilio.service";
 import { getFactsForAI } from "@/server/services/properties/property-fact.service";
+import { normalizePhoneToE164 } from "@/lib/phone";
 
 async function buildTourOfferLines(
   organizationId: string,
   propertyId: string,
   propertySchedule: unknown,
   listingTitle: string,
+  maxSlots = 3,
 ): Promise<string> {
   const now = new Date();
   const internalBusy = await getBusyRangesForProperty(
@@ -33,7 +43,7 @@ async function buildTourOfferLines(
     now,
     addHours(now, 24 * 21),
   );
-  const slots = generateAvailableTourSlots(propertySchedule, now, 3, internalBusy);
+  const slots = generateAvailableTourSlots(propertySchedule, now, maxSlots, internalBusy);
   if (slots.length === 0) return "";
   const lines = slots.map(
     (d) =>
@@ -178,6 +188,13 @@ export async function sendToProspect(
           provider: input.provider ?? "resend",
           channelMetadata: deliveryMetadata("sent", attempts),
         });
+        console.info("[sendToProspect] result", {
+          leadId: input.leadId,
+          conversationId: input.conversationId,
+          delivered: true,
+          channel,
+          attempts,
+        });
         return { messageId: message.id, delivered: true, channel, attempts };
       } catch (error) {
         attempts.push({
@@ -193,6 +210,7 @@ export async function sendToProspect(
     if (channel === "SMS" && lead.phone?.trim()) {
       try {
         const sendResult = await sendTransactionalSms({
+          organizationId: ctx.organizationId,
           to: lead.phone.trim(),
           body: input.body,
         });
@@ -220,7 +238,33 @@ export async function sendToProspect(
           authorUserId: input.authorUserId,
           isAiGenerated: input.isAiGenerated,
           provider: input.provider ?? "twilio",
+          externalId: sendResult.id,
           channelMetadata: deliveryMetadata("sent", attempts),
+        });
+        const normalizedPhone = normalizePhoneToE164(lead.phone);
+        if (normalizedPhone) {
+          await prisma.contactChannelIdentity.upsert({
+            where: {
+              leadId_channelType_handle: {
+                leadId: input.leadId,
+                channelType: ListingChannelType.SMS,
+                handle: normalizedPhone,
+              },
+            },
+            update: {},
+            create: {
+              leadId: input.leadId,
+              channelType: ListingChannelType.SMS,
+              handle: normalizedPhone,
+            },
+          });
+        }
+        console.info("[sendToProspect] result", {
+          leadId: input.leadId,
+          conversationId: input.conversationId,
+          delivered: true,
+          channel,
+          attempts,
         });
         return { messageId: message.id, delivered: true, channel, attempts };
       } catch (error) {
@@ -247,6 +291,13 @@ export async function sendToProspect(
     provider: input.provider ?? "none",
     channelMetadata: deliveryMetadata("skipped", attempts),
   });
+  console.info("[sendToProspect] result", {
+    leadId: input.leadId,
+    conversationId: input.conversationId,
+    delivered: false,
+    channel: MessageChannel.IN_APP,
+    attempts,
+  });
   return {
     messageId: message.id,
     delivered: false,
@@ -270,8 +321,22 @@ export async function dispatchFirstOutreach(
     },
   });
   if (!lead || lead.automationPaused) return;
+  console.info("[dispatch.firstOutreach] enter", {
+    leadId,
+    conversationId,
+    stage: lead.inboxStage,
+    automationPaused: lead.automationPaused,
+  });
 
-  if (lead.inboxStage !== LeadInboxStage.NEW_INQUIRY && lead.inboxStage !== LeadInboxStage.NEW_LEADS) {
+  // Include APPLICATION_STARTED: public application flow sets this in the same request as
+  // ingest, often before Inngest runs — previously first outreach was skipped entirely.
+  const firstTouchStages: LeadInboxStage[] = [
+    LeadInboxStage.NEW_INQUIRY,
+    LeadInboxStage.NEW_LEADS,
+    LeadInboxStage.APPLICATION_STARTED,
+    LeadInboxStage.TOUR_SCHEDULED,
+  ];
+  if (!firstTouchStages.includes(lead.inboxStage)) {
     return;
   }
 
@@ -293,44 +358,70 @@ export async function dispatchFirstOutreach(
     orderBy: { generatedAt: "desc" },
   });
 
-  const guided = await getNextQualificationPrompt(leadId);
-  let body =
-    draft?.body ??
-    guided ??
-    `Hi ${lead.firstName},\n\nThanks for reaching out! We're on it and will help you find the right fit.\n\nWhat's your target move-in date and ideal monthly budget?`;
-
-  const { score } = await getQualificationCompleteness(leadId);
-  const property = lead.listing?.unit?.property;
-  if (property && score >= 0.5) {
-    const offer = await buildTourOfferLines(
-      ctx.organizationId,
-      property.id,
-      property.showingSchedule,
-      lead.listing?.title ?? "this home",
-    );
-    if (offer) {
-      body = `${body}\n\n${offer}`;
-    }
-  }
-  const factLines = await buildPropertyFactLines(ctx, {
-    propertyId: property?.id,
-    unitId: lead.listing?.unit?.id ?? null,
+  await computeLeadStrength(ctx, leadId);
+  const generated = await generateContextualReply(ctx, { conversationId, leadId });
+  const decision = await evaluateAutomationDecision(ctx, {
+    leadId,
+    conversationId,
+    intent: generated.intent,
+    confidence: generated.confidence,
   });
-  if (factLines) body = `${body}\n\n${factLines}`;
+  console.info("[dispatch.firstOutreach] decision", {
+    leadId,
+    conversationId,
+    decision: decision.decision,
+    reasons: decision.reasons,
+    intent: generated.intent,
+    confidence: generated.confidence,
+    suggestedChannel: generated.suggestedChannel,
+  });
+
+  if (decision.decision === "ESCALATE") {
+    await prisma.lead.update({
+      where: { id: leadId },
+      data: { automationPaused: true, inboxStage: LeadInboxStage.NEEDS_HUMAN_REVIEW },
+    });
+    return;
+  }
+  if (decision.decision === "WAIT") return;
+
+  if (decision.decision === "DRAFT_FOR_REVIEW") {
+    await prisma.aIReplyDraft.updateMany({
+      where: { conversationId, status: "SUGGESTED" },
+      data: { status: "SUPERSEDED" },
+    });
+    await prisma.aIReplyDraft.create({
+      data: {
+        organizationId: ctx.organizationId,
+        leadId,
+        conversationId,
+        body: generated.body,
+        suggestedChannel: generated.suggestedChannel,
+        contextNote: `Needs review: ${decision.reasons.join(", ")}`,
+        automationConfidence: generated.confidence,
+        status: "SUGGESTED",
+        modelId: generated.modelId,
+        promptVersion: "v5.0",
+      },
+    });
+    return;
+  }
 
   await sendToProspect(ctx, {
     leadId,
     conversationId,
-    body,
+    body: generated.body,
     subject: buildOutboundSubject(lead, "inquiry"),
     preferredChannel:
-      draft?.suggestedChannel === "EMAIL" || draft?.suggestedChannel === "SMS"
-        ? draft.suggestedChannel
+      generated.suggestedChannel === "EMAIL" || generated.suggestedChannel === "SMS"
+        ? generated.suggestedChannel
         : "AUTO",
     fallbackLabel: "Outreach not sent — no deliverable channel configured",
   });
 
   await transitionAfterFirstOutreach(ctx, leadId);
+  const { score } = await getQualificationCompleteness(leadId);
+  await transitionOnQualificationThreshold(ctx, leadId, score);
 }
 
 /**
@@ -369,47 +460,58 @@ export async function dispatchAutomationReply(
   if (!lastInbound) return;
   if (lastOutbound && lastOutbound.sentAt >= lastInbound.sentAt) return;
 
-  const guided = await getNextQualificationPrompt(leadId);
-  const draft = await prisma.aIReplyDraft.findFirst({
-    where: { conversationId, organizationId: ctx.organizationId },
-    orderBy: { generatedAt: "desc" },
+  await transitionOnProspectReply(ctx, leadId);
+  await computeLeadStrength(ctx, leadId);
+  const generated = await generateContextualReply(ctx, { conversationId, leadId });
+  const decision = await evaluateAutomationDecision(ctx, {
+    leadId,
+    conversationId,
+    intent: generated.intent,
+    confidence: generated.confidence,
   });
-
-  let body =
-    guided ??
-    draft?.body ??
-    `Thanks for the update — we're noting this and will follow up shortly.`;
-
-  const { score } = await getQualificationCompleteness(leadId);
-  const property = lead.listing?.unit?.property;
-  if (property && score >= 0.5) {
-    const offer = await buildTourOfferLines(
-      ctx.organizationId,
-      property.id,
-      property.showingSchedule,
-      lead.listing?.title ?? "this home",
-    );
-    if (offer) {
-      body = `${body}\n\n${offer}`;
-    }
+  if (decision.decision === "ESCALATE") {
+    await prisma.lead.update({
+      where: { id: leadId },
+      data: { automationPaused: true, inboxStage: LeadInboxStage.NEEDS_HUMAN_REVIEW },
+    });
+    return;
   }
-  const factLines = await buildPropertyFactLines(ctx, {
-    propertyId: property?.id,
-    unitId: lead.listing?.unit?.id ?? null,
-  });
-  if (factLines) body = `${body}\n\n${factLines}`;
+  if (decision.decision === "WAIT") return;
+  if (decision.decision === "DRAFT_FOR_REVIEW") {
+    await prisma.aIReplyDraft.updateMany({
+      where: { conversationId, status: "SUGGESTED" },
+      data: { status: "SUPERSEDED" },
+    });
+    await prisma.aIReplyDraft.create({
+      data: {
+        organizationId: ctx.organizationId,
+        leadId,
+        conversationId,
+        body: generated.body,
+        suggestedChannel: generated.suggestedChannel,
+        contextNote: `Needs review: ${decision.reasons.join(", ")}`,
+        automationConfidence: generated.confidence,
+        status: "SUGGESTED",
+        modelId: generated.modelId,
+        promptVersion: "v5.0",
+      },
+    });
+    return;
+  }
 
   await sendToProspect(ctx, {
     leadId,
     conversationId,
-    body,
+    body: generated.body,
     subject: buildOutboundSubject(lead, "reply"),
     preferredChannel:
-      draft?.suggestedChannel === "EMAIL" || draft?.suggestedChannel === "SMS"
-        ? draft.suggestedChannel
+      generated.suggestedChannel === "EMAIL" || generated.suggestedChannel === "SMS"
+        ? generated.suggestedChannel
         : "AUTO",
     fallbackLabel: "Reply not sent — no deliverable channel configured",
   });
+  const { score } = await getQualificationCompleteness(leadId);
+  await transitionOnQualificationThreshold(ctx, leadId, score);
 }
 
 export async function dispatchLeadFollowUp(

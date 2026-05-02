@@ -14,7 +14,19 @@ export type ConversationMessage = {
   authorType: string;
   isAiGenerated: boolean;
   authorUser?: { name: string | null; email?: string | null } | null;
+  events?: Array<{ id: string; type: string; occurredAt: string }>;
 };
+
+function deliveryBadgeForMessage(message: ConversationMessage): { label: string; tone: string } | null {
+  if (message.direction !== "OUTBOUND") return null;
+  const latest = message.events?.[0];
+  if (!latest) return null;
+  if (latest.type === "DELIVERED") return { label: "Delivered", tone: "text-emerald-600" };
+  if (latest.type === "FAILED" || latest.type === "UNDELIVERED" || latest.type === "BOUNCED") {
+    return { label: "Failed", tone: "text-destructive" };
+  }
+  return { label: latest.type.toLowerCase(), tone: "text-muted-foreground" };
+}
 
 function formatDayDivider(iso: string): string {
   const d = new Date(iso);
@@ -99,6 +111,7 @@ export function ConversationThread({
 
         const m = row.message!;
         const inbound = m.direction === "INBOUND";
+        const delivery = deliveryBadgeForMessage(m);
 
         return (
           <Fragment key={row.key}>
@@ -126,6 +139,12 @@ export function ConversationThread({
                       <>
                         <span>-</span>
                         <span>{m.authorUser.name}</span>
+                      </>
+                    ) : null}
+                    {delivery ? (
+                      <>
+                        <span>-</span>
+                        <span className={delivery.tone}>{delivery.label}</span>
                       </>
                     ) : null}
                     <span className="ml-1">{shortTime(m.sentAt)}</span>

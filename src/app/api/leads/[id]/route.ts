@@ -8,17 +8,30 @@ import { listMessagesForLead } from "@/server/services/communications/conversati
 import { getLeadById } from "@/server/services/leasing/lead.service";
 import { resolveReplyStrategy } from "@/server/services/channels/reply-strategy.service";
 import { getLeadTimeline } from "@/server/services/timeline/timeline.service";
+import { listRecommendationsForLead } from "@/server/services/recommendations/recommendation.service";
+import { prisma } from "@/server/db/client";
+import { normalizePhoneToE164 } from "@/lib/phone";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const ctx = await requireOrgContext();
     const { id } = await params;
-    const [lead, conversation, activities, aiActions, timeline] = await Promise.all([
+    const [lead, conversation, activities, aiActions, timeline, recommendations, units] = await Promise.all([
       getLeadById(ctx, id),
       listMessagesForLead(ctx, id),
       listActivityForEntity(ctx, "Lead", id),
       listAIActionsForLead(ctx, id),
       getLeadTimeline(ctx, id),
+      listRecommendationsForLead(ctx, id),
+      prisma.unit.findMany({
+        where: { property: { organizationId: ctx.organizationId } },
+        orderBy: [{ property: { name: "asc" } }, { unitNumber: "asc" }],
+        select: {
+          id: true,
+          unitNumber: true,
+          property: { select: { name: true } },
+        },
+      }),
     ]);
     if (!lead) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -42,12 +55,32 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
+    const smsConsent =
+      lead?.phone && normalizePhoneToE164(lead.phone)
+        ? await prisma.smsConsent.findUnique({
+            where: {
+              organizationId_phone: {
+                organizationId: ctx.organizationId,
+                phone: normalizePhoneToE164(lead.phone)!,
+              },
+            },
+            select: {
+              status: true,
+              optOutAt: true,
+              optOutKeyword: true,
+            },
+          })
+        : null;
+
     return NextResponse.json({
       lead: JSON.parse(JSON.stringify(lead)),
       conversation: conversation ? JSON.parse(JSON.stringify(conversation)) : null,
       activities: JSON.parse(JSON.stringify(activities)),
       aiActions: JSON.parse(JSON.stringify(aiActions)),
       timeline: JSON.parse(JSON.stringify(timeline)),
+      recommendations: JSON.parse(JSON.stringify(recommendations)),
+      units: JSON.parse(JSON.stringify(units)),
+      smsConsent: smsConsent ? JSON.parse(JSON.stringify(smsConsent)) : null,
       replyStrategy,
       copilotContext: copilotContext ? JSON.parse(JSON.stringify(copilotContext)) : null,
     });

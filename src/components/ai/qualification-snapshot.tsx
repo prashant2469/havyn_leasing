@@ -15,6 +15,11 @@ const QUAL_LABEL: Record<QualificationKey, string> = {
   monthlyBudget: "Budget",
   occupants: "Occupants",
   propertyInterest: "Property / area",
+  incomeRange: "Income range",
+  currentLeaseSituation: "Current lease",
+  employmentType: "Employment",
+  creditSelfReport: "Credit profile",
+  moveInUrgency: "Move urgency",
 };
 
 const QUAL_DISPLAY_KEYS = QUALIFICATION_KEYS.map((key) => ({ key, label: QUAL_LABEL[key] }));

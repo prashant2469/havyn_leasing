@@ -7,6 +7,7 @@ import { Permission } from "@/server/auth/permissions";
 import { requirePermission } from "@/server/auth/require-permission";
 import {
   createLead,
+  advanceLeadPipeline,
   updateLeadContact,
   updateLeadInboxStage,
   updateLeadStatus,
@@ -108,6 +109,29 @@ export async function updateLeadContactAction(_prev: unknown, formData: FormData
     return { ok: true as const };
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to update lead contact";
+    return { ok: false as const, message };
+  }
+}
+
+export async function setLeadAutomationPausedAction(_prev: unknown, formData: FormData) {
+  try {
+    const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.LEADS_MANAGE);
+    const leadId = String(formData.get("leadId") ?? "").trim();
+    const pausedRaw = String(formData.get("paused") ?? "").trim().toLowerCase();
+    if (!leadId) throw new Error("Lead required");
+    if (pausedRaw !== "true" && pausedRaw !== "false") throw new Error("Invalid paused value");
+
+    await advanceLeadPipeline(ctx, {
+      leadId,
+      automationPaused: pausedRaw === "true",
+    });
+    revalidatePath("/leasing/inbox");
+    revalidatePath("/leasing/leads");
+    revalidatePath(`/leasing/leads/${leadId}`);
+    return { ok: true as const };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Failed to update automation";
     return { ok: false as const, message };
   }
 }

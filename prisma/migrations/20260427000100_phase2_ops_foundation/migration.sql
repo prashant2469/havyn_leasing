@@ -1,9 +1,7 @@
 -- CreateEnum
 CREATE TYPE "RecommendationStatus" AS ENUM ('SUGGESTED', 'SHARED_WITH_PROSPECT', 'PROSPECT_INTERESTED', 'DISMISSED');
 
--- AlterEnum
-ALTER TYPE "AISuggestedActionType" ADD VALUE IF NOT EXISTS 'SHARE_RECOMMENDATIONS';
-ALTER TYPE "AISuggestedActionType" ADD VALUE IF NOT EXISTS 'SCHEDULE_RECOMMENDED_TOUR';
+-- AISuggestedActionType is created in migration 20260425120000_aisuggested_action_type_enum (full enum).
 
 -- AlterTable Property
 ALTER TABLE "Property"

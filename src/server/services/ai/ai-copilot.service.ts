@@ -18,6 +18,7 @@ import {
   AIReplyDraft,
   AISuggestedAction,
   ConversationSummary,
+  LeadStrengthSignal,
   LeadPrioritySignal,
   QualificationAnswer,
 } from "@prisma/client";
@@ -29,6 +30,7 @@ import type { OrgContext } from "@/server/auth/context";
 
 import { generateConversationSummary } from "./conversation-summary.service";
 import { detectEscalationSignals } from "./escalation.service";
+import { computeLeadStrength } from "./lead-strength.service";
 import { computeLeadPriority } from "./lead-priority.service";
 import { extractQualificationsFromConversation } from "./qualification-extraction.service";
 import { suggestReplyDraft } from "./reply-draft.service";
@@ -39,6 +41,7 @@ export interface CopilotAnalysisResult {
   suggestedActions: AISuggestedAction[];
   replyDraft: AIReplyDraft;
   prioritySignal: LeadPrioritySignal;
+  strengthSignal: LeadStrengthSignal;
   extractedQualifications: QualificationAnswer[];
   escalationFlags: AIEscalationFlag[];
 }
@@ -69,8 +72,9 @@ export async function runCopilotAnalysis(
     extractQualificationsFromConversation(ctx, conversationId),
   ]);
 
-  const [prioritySignal, suggestedActions, escalationFlags, replyDraft] = await Promise.all([
+  const [prioritySignal, strengthSignal, suggestedActions, escalationFlags, replyDraft] = await Promise.all([
     computeLeadPriority(ctx, leadId),
+    computeLeadStrength(ctx, leadId),
     generateSuggestedActions(ctx, leadId, conversationId),
     detectEscalationSignals(ctx, leadId, conversationId),
     suggestReplyDraft(ctx, conversationId),
@@ -81,6 +85,7 @@ export async function runCopilotAnalysis(
     suggestedActions,
     replyDraft,
     prioritySignal,
+    strengthSignal,
     extractedQualifications,
     escalationFlags,
   };
@@ -92,6 +97,7 @@ export interface CopilotContext {
   pendingActions: AISuggestedAction[];
   openEscalations: AIEscalationFlag[];
   prioritySignal: LeadPrioritySignal | null;
+  strengthSignal: LeadStrengthSignal | null;
   qualifications: QualificationAnswer[];
 }
 
@@ -101,7 +107,7 @@ export async function loadCopilotContext(
   leadId: string,
   conversationId?: string,
 ): Promise<CopilotContext> {
-  const [summary, activeDraft, pendingActions, openEscalations, prioritySignal, qualifications] =
+  const [summary, activeDraft, pendingActions, openEscalations, prioritySignal, strengthSignal, qualifications] =
     await Promise.all([
       conversationId
         ? prisma.conversationSummary.findFirst({
@@ -144,6 +150,7 @@ export async function loadCopilotContext(
       }),
 
       prisma.leadPrioritySignal.findUnique({ where: { leadId } }),
+      prisma.leadStrengthSignal.findUnique({ where: { leadId } }),
 
       prisma.qualificationAnswer.findMany({
         where: { leadId },
@@ -157,6 +164,7 @@ export async function loadCopilotContext(
     pendingActions,
     openEscalations,
     prioritySignal,
+    strengthSignal,
     qualifications,
   };
 }
