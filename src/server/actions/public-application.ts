@@ -11,12 +11,42 @@ import { getPublishedPublicListing } from "@/server/services/listings/public-lis
 import { applicationIntakeSchema, type ApplicationIntakePayload } from "@/server/validation/application";
 import { publicApplicationFormSchema } from "@/server/validation/public-application";
 
+function isPrismaCode(e: unknown, code: string): boolean {
+  return typeof e === "object" && e !== null && "code" in e && (e as { code?: string }).code === code;
+}
+
 function mapPublicApplicationError(e: unknown): string {
   if (e instanceof ZodError) return "Please review the application and try again.";
   const msg = e instanceof Error ? e.message : "";
   if (!msg) return "Something went wrong. Please try again.";
   if (msg.toLowerCase().includes("not available")) return "This listing is not currently available.";
+  if (msg.includes("Can't reach database") || msg.toLowerCase().includes("database server"))
+    return "We can't reach our database right now. Please try again in a few minutes.";
+  if (isPrismaCode(e, "P2002") || msg.toLowerCase().includes("unique constraint"))
+    return "We couldn't save this submission because of a duplicate record. Try again or use a different email.";
+  console.error("[public-application] submit failed:", e);
   return "We couldn't submit your application. Please check your details and try again.";
+}
+
+function incomeRangeLabel(monthlyIncome: number): string {
+  if (monthlyIncome < 2_500) return "Under $2,500";
+  if (monthlyIncome < 4_000) return "$2,500 - $3,999";
+  if (monthlyIncome < 6_000) return "$4,000 - $5,999";
+  if (monthlyIncome < 8_000) return "$6,000 - $7,999";
+  if (monthlyIncome < 10_000) return "$8,000 - $9,999";
+  return "$10,000+";
+}
+
+function moveInUrgencyLabel(desiredLeaseStart?: string): string | null {
+  if (!desiredLeaseStart) return null;
+  const start = new Date(desiredLeaseStart);
+  if (Number.isNaN(start.getTime())) return null;
+  const ms = start.getTime() - Date.now();
+  const days = Math.floor(ms / (24 * 60 * 60 * 1000));
+  if (days <= 14) return "immediate";
+  if (days <= 45) return "30-45_days";
+  if (days <= 90) return "60-90_days";
+  return "flexible";
 }
 
 /**
@@ -230,6 +260,40 @@ export async function submitPublicApplicationAction(
           },
         }),
       );
+      qualificationUpserts.push(
+        prisma.qualificationAnswer.upsert({
+          where: { leadId_key: { leadId: ingest.leadId, key: "monthlyBudget" } },
+          create: {
+            leadId: ingest.leadId,
+            key: "monthlyBudget",
+            value: payload.monthlyIncome as Prisma.InputJsonValue,
+            source: "MANUAL",
+            metadata: { source: "public_application", derivedFrom: "monthlyIncome" },
+          },
+          update: {
+            value: payload.monthlyIncome as Prisma.InputJsonValue,
+            source: "MANUAL",
+            metadata: { source: "public_application", derivedFrom: "monthlyIncome" },
+          },
+        }),
+      );
+      qualificationUpserts.push(
+        prisma.qualificationAnswer.upsert({
+          where: { leadId_key: { leadId: ingest.leadId, key: "incomeRange" } },
+          create: {
+            leadId: ingest.leadId,
+            key: "incomeRange",
+            value: incomeRangeLabel(payload.monthlyIncome) as Prisma.InputJsonValue,
+            source: "MANUAL",
+            metadata: { source: "public_application", derivedFrom: "monthlyIncome" },
+          },
+          update: {
+            value: incomeRangeLabel(payload.monthlyIncome) as Prisma.InputJsonValue,
+            source: "MANUAL",
+            metadata: { source: "public_application", derivedFrom: "monthlyIncome" },
+          },
+        }),
+      );
     }
     if (typeof payload.occupants === "number") {
       qualificationUpserts.push(
@@ -268,6 +332,62 @@ export async function submitPublicApplicationAction(
           },
         }),
       );
+      qualificationUpserts.push(
+        prisma.qualificationAnswer.upsert({
+          where: { leadId_key: { leadId: ingest.leadId, key: "creditSelfReport" } },
+          create: {
+            leadId: ingest.leadId,
+            key: "creditSelfReport",
+            value: payload.creditScoreRange as Prisma.InputJsonValue,
+            source: "MANUAL",
+            metadata: { source: "public_application", derivedFrom: "creditScoreRange" },
+          },
+          update: {
+            value: payload.creditScoreRange as Prisma.InputJsonValue,
+            source: "MANUAL",
+            metadata: { source: "public_application", derivedFrom: "creditScoreRange" },
+          },
+        }),
+      );
+    }
+    if (payload.desiredLeaseStart) {
+      qualificationUpserts.push(
+        prisma.qualificationAnswer.upsert({
+          where: { leadId_key: { leadId: ingest.leadId, key: "moveInDate" } },
+          create: {
+            leadId: ingest.leadId,
+            key: "moveInDate",
+            value: payload.desiredLeaseStart as Prisma.InputJsonValue,
+            source: "MANUAL",
+            metadata: { source: "public_application", derivedFrom: "desiredLeaseStart" },
+          },
+          update: {
+            value: payload.desiredLeaseStart as Prisma.InputJsonValue,
+            source: "MANUAL",
+            metadata: { source: "public_application", derivedFrom: "desiredLeaseStart" },
+          },
+        }),
+      );
+    }
+    const moveInUrgency = moveInUrgencyLabel(payload.desiredLeaseStart);
+    if (moveInUrgency) {
+      qualificationUpserts.push(
+        prisma.qualificationAnswer.upsert({
+          where: { leadId_key: { leadId: ingest.leadId, key: "moveInUrgency" } },
+          create: {
+            leadId: ingest.leadId,
+            key: "moveInUrgency",
+            value: moveInUrgency as Prisma.InputJsonValue,
+            source: "MANUAL",
+            metadata: { source: "public_application", derivedFrom: "desiredLeaseStart" },
+          },
+          update: {
+            value: moveInUrgency as Prisma.InputJsonValue,
+            source: "MANUAL",
+            metadata: { source: "public_application", derivedFrom: "desiredLeaseStart" },
+          },
+        }),
+      );
     }
     if (qualificationUpserts.length > 0) {
       try {
@@ -283,6 +403,7 @@ export async function submitPublicApplicationAction(
       message: "Application submitted. A leasing specialist will review it and follow up soon.",
     };
   } catch (e) {
-    return { ok: false, message: mapPublicApplicationError(e) };
+    const message = mapPublicApplicationError(e);
+    return { ok: false, message };
   }
 }

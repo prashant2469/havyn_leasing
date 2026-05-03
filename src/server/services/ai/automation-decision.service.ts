@@ -49,7 +49,7 @@ export async function evaluateAutomationDecision(
 
   const conversation = await prisma.conversation.findFirst({
     where: { id: input.conversationId, organizationId: ctx.organizationId },
-    select: { replyMode: true },
+    select: { replyMode: true, channelType: true },
   });
   if (!conversation) return { decision: "WAIT", reasons: ["conversation_not_found"] };
   if (conversation.replyMode === "MANUAL_ONLY") {
@@ -68,7 +68,8 @@ export async function evaluateAutomationDecision(
       ...(lastInbound ? { sentAt: { gte: lastInbound.sentAt } } : {}),
     },
   });
-  if (outboundSinceInbound >= 2) {
+  const outboundLimit = conversation.channelType === "SMS" ? 3 : 2;
+  if (outboundSinceInbound >= outboundLimit) {
     return { decision: "WAIT", reasons: ["outbound_limit_reached"] };
   }
 
@@ -84,7 +85,8 @@ export async function evaluateAutomationDecision(
     return { decision: "ESCALATE", reasons: ["low_model_confidence"] };
   }
 
-  if (isQuietHours()) {
+  const quietHours = isQuietHours();
+  if (quietHours) {
     reasons.push("quiet_hours");
   }
 
@@ -93,8 +95,17 @@ export async function evaluateAutomationDecision(
     return { decision: "DRAFT_FOR_REVIEW", reasons: ["weak_or_disqualified_strength", ...reasons] };
   }
 
-  if (input.confidence >= 0.7 && !isQuietHours()) {
-    return { decision: "AUTO_REPLY", reasons: ["high_confidence_safe_intent", `strength_tier=${tier}`] };
+  const minAutoReplyConfidence = conversation.channelType === "SMS" ? 0.5 : 0.7;
+  if (input.confidence >= minAutoReplyConfidence && !quietHours) {
+    return {
+      decision: "AUTO_REPLY",
+      reasons: [
+        conversation.channelType === "SMS"
+          ? "sms_medium_confidence_autoreply"
+          : "high_confidence_safe_intent",
+        `strength_tier=${tier}`,
+      ],
+    };
   }
 
   return { decision: "DRAFT_FOR_REVIEW", reasons: ["default_human_review_lane", ...reasons] };

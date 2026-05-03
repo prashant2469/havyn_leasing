@@ -22,6 +22,7 @@
     "db:studio": "prisma studio",
     "zillow-feed:verify": "tsx scripts/verify-zillow-feed-build.mts",
     "admin:bootstrap": "tsx scripts/bootstrap-admin.ts",
+    "twilio:webhook:configure": "tsx scripts/configure-twilio-webhook.ts",
     "setup": "npx --yes vercel@53.1.0 link --yes && npx --yes vercel@53.1.0 env pull .env.local --environment=development --yes && npm install && npx prisma migrate deploy"
   },
   "prisma": {

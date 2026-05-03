@@ -174,10 +174,12 @@ export async function ingestInquiry(
   const bypassLeadDedupeForQaPhone = shouldBypassPhoneLeadDedupe({
     organizationId: ctx.organizationId,
     contactPhoneRaw: params.contact.phone,
+    channelType: params.channelType,
   });
 
   const { lead, conversation, message, isNewLead } = await prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${dedupeKey}))`;
+    // `pg_advisory_xact_lock` returns SQL `void`; `$queryRaw` cannot deserialize that column — use `$executeRaw`.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${dedupeKey}))`;
 
     // --- Lead dedup: match by email, then phone identity / lead.phone (unless QA allowlist) ---
     let lead: Lead | null = null;

@@ -1,4 +1,5 @@
 import { prisma } from "@/server/db/client";
+import { getTwilioInboundSmsWebhookUrl } from "@/server/services/outbound/twilio-webhook-url";
 
 function toStringRecord(formData: FormData): Record<string, string> {
   const out: Record<string, string> = {};
@@ -19,7 +20,20 @@ export async function validateTwilioFormSignature(
   if (!signature || !authToken) return false;
 
   const { validateRequest } = await import("twilio");
-  return validateRequest(authToken, signature, request.url, toStringRecord(formData));
+  const params = toStringRecord(formData);
+  const candidates = new Set<string>();
+  candidates.add(request.url);
+  const canonicalInbound = getTwilioInboundSmsWebhookUrl();
+  if (canonicalInbound) {
+    candidates.add(canonicalInbound);
+  }
+
+  for (const url of candidates) {
+    if (validateRequest(authToken, signature, url, params)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export async function resolveTwilioOrganizationId(): Promise<string | null> {

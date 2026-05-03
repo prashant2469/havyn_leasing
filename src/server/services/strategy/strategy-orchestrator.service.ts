@@ -3,6 +3,7 @@ import { LeadInboxStage } from "@prisma/client";
 import type { OrgContext } from "@/server/auth/context";
 import { prisma } from "@/server/db/client";
 import { evaluateAutomationDecision } from "@/server/services/ai/automation-decision.service";
+import { generateContextualReply } from "@/server/services/ai/contextual-reply.service";
 import { computeLeadStrength } from "@/server/services/ai/lead-strength.service";
 import { getQualificationCompleteness } from "@/server/services/leasing/qualification-score.service";
 import {
@@ -40,14 +41,30 @@ export async function resolveAndExecuteStrategy(
   }
   if (strategy.action === "WAIT") return;
 
-  if (strategy.action === "RECOMMEND") {
-    await generateRecommendations(ctx, input.leadId);
-  }
-
-  const generated = await generateStrategyMessage(ctx, {
+  await generateRecommendations(ctx, input.leadId);
+  const strategyMessage = await generateStrategyMessage(ctx, {
     leadId: input.leadId,
     decision: strategy,
   });
+  const generated =
+    input.phase === "reply"
+      ? await (async () => {
+          const contextual = await generateContextualReply(ctx, {
+            conversationId: input.conversationId,
+            leadId: input.leadId,
+          });
+          return {
+            ...strategyMessage,
+            body: contextual.body,
+            preferredChannel:
+              contextual.suggestedChannel === "SMS"
+                ? "SMS"
+                : contextual.suggestedChannel === "EMAIL"
+                  ? "EMAIL"
+                  : strategyMessage.preferredChannel,
+          } as const;
+        })()
+      : strategyMessage;
   const decision = await evaluateAutomationDecision(ctx, {
     leadId: input.leadId,
     conversationId: input.conversationId,

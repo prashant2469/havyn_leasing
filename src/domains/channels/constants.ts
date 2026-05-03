@@ -40,7 +40,7 @@ export const defaultReplyModeForChannel: Record<ListingChannelType, Conversation
   ZILLOW: ConversationReplyMode.MANUAL_ONLY,
   FACEBOOK_MARKETPLACE: ConversationReplyMode.MANUAL_ONLY,
   EMAIL: ConversationReplyMode.REDIRECT_TO_OWNED_CHANNEL,
-  SMS: ConversationReplyMode.REDIRECT_TO_OWNED_CHANNEL,
+  SMS: ConversationReplyMode.IN_CHANNEL_REPLY,
   MANUAL: ConversationReplyMode.MANUAL_ONLY,
   OTHER: ConversationReplyMode.MANUAL_ONLY,
 };

@@ -3,14 +3,7 @@
  */
 import { normalizePhoneToE164 } from "@/lib/phone";
 import { prisma } from "@/server/db/client";
-
-function getStatusCallbackUrl(): string | null {
-  const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
-  if (!appUrl) return null;
-  return `${appUrl.replace(/\/+$/, "")}/api/webhooks/twilio/status`;
-}
+import { getTwilioStatusCallbackUrl } from "@/server/services/outbound/twilio-webhook-url";
 
 export async function sendTransactionalSms(input: {
   organizationId?: string;
@@ -42,7 +35,7 @@ export async function sendTransactionalSms(input: {
 
   const { default: twilio } = await import("twilio");
   const client = twilio(accountSid, authToken);
-  const statusCallback = getStatusCallbackUrl();
+  const statusCallback = getTwilioStatusCallbackUrl();
   try {
     const message = await client.messages.create({
       from,

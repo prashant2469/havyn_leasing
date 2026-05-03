@@ -71,18 +71,19 @@ export async function resolveStrategyDecision(
 
   const intent = classifyInboundIntent(latestInbound?.body ?? "");
 
-  if (!lead || !strength) {
+  if (!lead) {
     return {
       action: "WAIT",
       bucket: LeadStrategyBucket.NURTURE,
-      reasons: ["lead_or_strength_missing"],
+      reasons: ["lead_missing"],
       readiness,
       intent: intent.intent,
       confidence: intent.confidence,
     };
   }
 
-  const bucket = strength.strategyBucket;
+  const bucket = strength?.strategyBucket ?? LeadStrategyBucket.PROMISING_INCOMPLETE;
+  const bucketFallbackReason = strength ? [] : ["strength_missing_defaulting_bucket"];
   const hasRecentOutbound = Boolean(
     latestInbound?.sentAt && latestOutbound?.sentAt && latestOutbound.sentAt >= latestInbound.sentAt,
   );
@@ -145,7 +146,7 @@ export async function resolveStrategyDecision(
     return {
       action: "TOUR_OFFER",
       bucket,
-      reasons: ["tour_ready_bucket"],
+      reasons: ["tour_ready_bucket", ...bucketFallbackReason],
       tourPropertyId: readiness.qualifiedListings.find((l) => l.hasSlots)?.listingId,
       readiness,
       intent: intent.intent,
@@ -168,7 +169,7 @@ export async function resolveStrategyDecision(
     return {
       action: "QUALIFY",
       bucket,
-      reasons: ["missing_qualification_data"],
+      reasons: ["missing_qualification_data", ...bucketFallbackReason],
       qualificationKeysToAsk: qual.missing.slice(0, 2),
       readiness,
       intent: intent.intent,
@@ -180,7 +181,7 @@ export async function resolveStrategyDecision(
     return {
       action: "RECOMMEND",
       bucket,
-      reasons: ["portfolio_fit_better_than_primary"],
+      reasons: ["portfolio_fit_better_than_primary", ...bucketFallbackReason],
       recommendationIds: topRecs.map((r) => r.id),
       readiness,
       intent: intent.intent,
@@ -202,7 +203,7 @@ export async function resolveStrategyDecision(
     return {
       action: "NURTURE",
       bucket,
-      reasons: ["nurture_lane"],
+      reasons: ["nurture_lane", ...bucketFallbackReason],
       readiness,
       intent: intent.intent,
       confidence: intent.confidence,
@@ -223,7 +224,7 @@ export async function resolveStrategyDecision(
     return {
       action: "NURTURE",
       bucket,
-      reasons: ["weak_hold_reengaged"],
+      reasons: ["weak_hold_reengaged", ...bucketFallbackReason],
       readiness,
       intent: intent.intent,
       confidence: intent.confidence,
