@@ -1,41 +1,36 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { requestPasswordResetAction } from "@/server/actions/auth";
 
 export function ForgotPasswordForm() {
-  const [pending, setPending] = useState(false);
+  const [pending, startTransition] = useTransition();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setErrorMessage(null);
     setSuccessMessage(null);
-    setPending(true);
 
     const formData = new FormData(event.currentTarget);
-    const email = String(formData.get("email") ?? "").trim().toLowerCase();
 
-    try {
-      const supabase = getSupabaseBrowserClient();
-      const redirectTo = `${window.location.origin}/login/reset-password`;
-      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
-
-      if (error) {
-        setErrorMessage(error.message || "Could not send reset email.");
-      } else {
+    startTransition(async () => {
+      try {
+        const result = await requestPasswordResetAction(formData);
+        if (!result.ok) {
+          setErrorMessage(result.error || "Could not send reset email.");
+          return;
+        }
         setSuccessMessage("If that email exists, a password reset link has been sent.");
+      } catch {
+        setErrorMessage("Unable to send reset email right now.");
       }
-    } catch {
-      setErrorMessage("Unable to send reset email right now.");
-    } finally {
-      setPending(false);
-    }
+    });
   }
 
   return (

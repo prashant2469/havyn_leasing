@@ -34,8 +34,12 @@ export function LeadsTableClient() {
   const { data, isLoading, error, isError } = useQuery({
     queryKey: ["leads"],
     queryFn: async () => {
-      const res = await fetch("/api/leads");
-      const json = await res.json();
+      const res = await fetch("/api/leads?limit=100");
+      const contentType = res.headers.get("content-type") ?? "";
+      const json = contentType.includes("application/json") ? await res.json() : null;
+      if (!json) {
+        throw new Error(`Leads API returned unexpected response (${res.status}).`);
+      }
       if (!res.ok) throw new Error(json.error ?? "Failed to load leads");
       return json as { leads: LeadRow[] };
     },

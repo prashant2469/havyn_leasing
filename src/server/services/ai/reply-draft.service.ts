@@ -57,34 +57,37 @@ export async function suggestReplyDraft(
   });
   if (!conversation) throw new Error("Conversation not found");
   if (!conversation.leadId) throw new Error("Conversation has no lead");
-
-  await prisma.aIReplyDraft.updateMany({
-    where: { conversationId, status: "SUGGESTED" },
-    data: { status: "SUPERSEDED" },
-  });
+  const leadId = conversation.leadId;
 
   const content = await _generateDraftBody(ctx, conversationId, conversation.leadId);
 
-  const draft = await prisma.aIReplyDraft.create({
-    data: {
-      organizationId: ctx.organizationId,
-      leadId: conversation.leadId,
-      conversationId,
-      body: content.body,
-      suggestedChannel: content.suggestedChannel,
-      contextNote: content.contextNote,
-      automationConfidence: content.confidence,
-      status: "SUGGESTED",
-      modelId: content.modelNote,
-      promptVersion: "v4.1",
-    },
+  const draft = await prisma.$transaction(async (tx) => {
+    await tx.aIReplyDraft.updateMany({
+      where: { conversationId, status: "SUGGESTED" },
+      data: { status: "SUPERSEDED" },
+    });
+
+    return tx.aIReplyDraft.create({
+      data: {
+        organizationId: ctx.organizationId,
+        leadId,
+        conversationId,
+        body: content.body,
+        suggestedChannel: content.suggestedChannel,
+        contextNote: content.contextNote,
+        automationConfidence: content.confidence,
+        status: "SUGGESTED",
+        modelId: content.modelNote ?? undefined,
+        promptVersion: "v4.1",
+      },
+    });
   });
 
   await recordActivity({
     ctx,
     verb: ActivityVerbs.AI_DRAFT_SUGGESTED,
     entityType: "Lead",
-    entityId: conversation.leadId,
+    entityId: leadId,
     metadata: { draftId: draft.id, conversationId },
   });
 

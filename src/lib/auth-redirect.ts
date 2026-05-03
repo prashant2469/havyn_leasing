@@ -1,7 +1,33 @@
 const DEFAULT_AUTH_REDIRECT = "/leasing";
 
 const BLOCKED_PATH_PREFIXES = ["/login", "/api/auth"];
+
+/** Only in-app paths users may be returned to after sign-in (blocks typos / open internal redirects to missing routes). */
+const ALLOWED_POST_AUTH_PREFIXES = [
+  "/",
+  "/leasing",
+  "/listings",
+  "/properties",
+  "/leases",
+  "/tours",
+  "/units",
+  "/analysis",
+  "/activity",
+  "/ai",
+  "/communications",
+  "/settings",
+  "/no-access",
+  "/r",
+] as const;
+
 const TRANSIENT_QUERY_KEYS = ["next_direct", "next", "nextUrl", "__nextDefaultLocale"];
+
+function isAllowedPostAuthPath(pathname: string): boolean {
+  if (pathname === "/") return true;
+  return ALLOWED_POST_AUTH_PREFIXES.some(
+    (prefix) => prefix !== "/" && (pathname === prefix || pathname.startsWith(`${prefix}/`)),
+  );
+}
 
 function toUrl(value: string): URL | null {
   try {
@@ -22,6 +48,9 @@ export function normalizeAuthRedirect(rawValue?: string | null): string {
   if (!parsed) return DEFAULT_AUTH_REDIRECT;
   if (!parsed.pathname.startsWith("/")) return DEFAULT_AUTH_REDIRECT;
   if (BLOCKED_PATH_PREFIXES.some((prefix) => parsed.pathname.startsWith(prefix))) {
+    return DEFAULT_AUTH_REDIRECT;
+  }
+  if (!isAllowedPostAuthPath(parsed.pathname)) {
     return DEFAULT_AUTH_REDIRECT;
   }
 

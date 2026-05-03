@@ -1,10 +1,14 @@
 import { after } from "next/server";
+import { Prisma } from "@prisma/client";
 
 import { getAutomationOrgContext } from "@/server/auth/automation-context";
+import { prisma } from "@/server/db/client";
 import { runCopilotAnalysis } from "@/server/services/ai/ai-copilot.service";
 import {
   dispatchAutomationReply,
+  dispatchLeadFollowUp,
   dispatchFirstOutreach,
+  sendToProspect,
 } from "@/server/services/outbound/dispatch.service";
 import { generateRecommendations } from "@/server/services/recommendations/recommendation.service";
 
@@ -40,6 +44,22 @@ export type LeadQualificationsChangedPayload = {
   organizationId: string;
   leadId: string;
 };
+
+async function queueDelayedJob(
+  organizationId: string,
+  type: "TOUR_REMINDER" | "LEAD_FOLLOW_UP_DUE",
+  payload: Record<string, unknown>,
+  runAt: Date,
+) {
+  await prisma.automationJob.create({
+    data: {
+      organizationId,
+      type,
+      payload: payload as Prisma.InputJsonValue,
+      runAt,
+    },
+  });
+}
 
 export async function enqueueLeadIngested(payload: LeadIngestedPayload) {
   const runLeadIngested = async () => {
@@ -91,12 +111,12 @@ export async function enqueueMessageReceived(payload: MessageReceivedPayload) {
   after(runMessageReceived);
 }
 
-export async function enqueueTourReminder(_payload: TourReminderPayload, _sendAt: Date) {
-  // Delayed jobs intentionally dropped with Inngest removal.
+export async function enqueueTourReminder(payload: TourReminderPayload, sendAt: Date) {
+  await queueDelayedJob(payload.organizationId, "TOUR_REMINDER", payload, sendAt);
 }
 
-export async function enqueueLeadFollowUpDue(_payload: LeadFollowUpDuePayload, _sendAt: Date) {
-  // Delayed jobs intentionally dropped with Inngest removal.
+export async function enqueueLeadFollowUpDue(payload: LeadFollowUpDuePayload, sendAt: Date) {
+  await queueDelayedJob(payload.organizationId, "LEAD_FOLLOW_UP_DUE", payload, sendAt);
 }
 
 export async function enqueueLeadQualificationsChanged(payload: LeadQualificationsChangedPayload) {
@@ -115,4 +135,102 @@ export async function enqueueLeadQualificationsChanged(payload: LeadQualificatio
   }
 
   after(runLeadQualificationsChanged);
+}
+
+async function runTourReminderJob(payload: TourReminderPayload) {
+  const ctx = await getAutomationOrgContext(payload.organizationId);
+  const tour = await prisma.tour.findFirst({
+    where: { id: payload.tourId, leadId: payload.leadId },
+    include: {
+      lead: {
+        select: {
+          firstName: true,
+          listing: { select: { title: true } },
+        },
+      },
+    },
+  });
+  if (!tour) return;
+
+  const label = payload.kind === "24h" ? "tomorrow" : "in about an hour";
+  const body = `Hi ${tour.lead.firstName}, quick reminder: your tour is ${label}. Reply here if you need to reschedule.`;
+  const conversationId =
+    payload.conversationId ??
+    (
+      await prisma.conversation.findFirst({
+        where: { organizationId: payload.organizationId, leadId: payload.leadId },
+        select: { id: true },
+      })
+    )?.id;
+  if (!conversationId) return;
+  await sendToProspect(ctx, {
+    leadId: payload.leadId,
+    conversationId,
+    body,
+    subject: tour.lead.listing?.title
+      ? `Tour reminder: ${tour.lead.listing.title}`
+      : "Tour reminder",
+    preferredChannel: "AUTO",
+    fallbackLabel: "Tour reminder not sent — no deliverable channel configured",
+  });
+}
+
+export async function processDueAutomationJobs(limit = 20): Promise<{
+  processed: number;
+  succeeded: number;
+  failed: number;
+}> {
+  const jobs = await prisma.automationJob.findMany({
+    where: { status: "PENDING", runAt: { lte: new Date() } },
+    orderBy: { runAt: "asc" },
+    take: Math.min(Math.max(limit, 1), 200),
+  });
+
+  let succeeded = 0;
+  let failed = 0;
+
+  for (const job of jobs) {
+    await prisma.automationJob.update({
+      where: { id: job.id },
+      data: { status: "RUNNING", attempts: { increment: 1 } },
+    });
+
+    try {
+      if (job.type === "LEAD_FOLLOW_UP_DUE") {
+        const payload = job.payload as unknown as LeadFollowUpDuePayload;
+        const ctx = await getAutomationOrgContext(payload.organizationId);
+        await dispatchLeadFollowUp(ctx, payload.leadId, {
+          conversationId: payload.conversationId ?? undefined,
+        });
+      } else if (job.type === "TOUR_REMINDER") {
+        await runTourReminderJob(job.payload as unknown as TourReminderPayload);
+      }
+
+      await prisma.automationJob.update({
+        where: { id: job.id },
+        data: { status: "SUCCEEDED", completedAt: new Date(), lastError: null },
+      });
+      succeeded += 1;
+    } catch (error) {
+      const attempts = job.attempts + 1;
+      const shouldRetry = attempts < 3;
+      await prisma.automationJob.update({
+        where: { id: job.id },
+        data: shouldRetry
+          ? {
+              status: "PENDING",
+              runAt: new Date(Date.now() + 5 * 60_000),
+              lastError: error instanceof Error ? error.message : String(error),
+            }
+          : {
+              status: "FAILED",
+              completedAt: new Date(),
+              lastError: error instanceof Error ? error.message : String(error),
+            },
+      });
+      failed += 1;
+    }
+  }
+
+  return { processed: jobs.length, succeeded, failed };
 }

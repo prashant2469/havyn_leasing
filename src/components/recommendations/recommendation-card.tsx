@@ -1,6 +1,6 @@
 "use client";
 
-import { RecommendationStatus } from "@prisma/client";
+import { RecommendationIntent, RecommendationStatus } from "@prisma/client";
 import { useActionState, useEffect } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,8 @@ type RecommendationRow = {
   id: string;
   leadId: string;
   score: number;
+  tourReady: boolean;
+  recommendationIntent: RecommendationIntent;
   status: RecommendationStatus;
   listing: {
     id: string;
@@ -83,6 +85,10 @@ export function RecommendationCard({
         {recommendation.listing.bedrooms != null ? ` · ${recommendation.listing.bedrooms} bd` : ""}
         {recommendation.listing.bathrooms != null ? ` · ${recommendation.listing.bathrooms} ba` : ""}
       </p>
+      <div className="mt-2 flex flex-wrap items-center gap-1">
+        <Badge variant="secondary">{recommendation.recommendationIntent.toLowerCase()}</Badge>
+        {recommendation.tourReady ? <Badge variant="outline">Tour ready</Badge> : null}
+      </div>
       <div className="mt-2 flex flex-wrap gap-2">
         <RecommendationStatusForm
           recommendationId={recommendation.id}

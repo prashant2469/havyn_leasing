@@ -7,8 +7,8 @@ generator client {
 
 datasource db {
   provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  url       = env("POSTGRES_PRISMA_URL")
+  directUrl = env("POSTGRES_URL_NON_POOLING")
 }
 
 // --- Tenancy ---
@@ -40,6 +40,7 @@ model Organization {
   googleCalendarConnections GoogleCalendarConnection[]
   propertyFacts     PropertyFact[]
   smsConsents      SmsConsent[]
+  automationJobs   AutomationJob[]
 }
 
 model User {
@@ -412,6 +413,15 @@ enum LeadStrengthTier {
   DISQUALIFIED
 }
 
+enum LeadStrategyBucket {
+  TOUR_READY
+  PROMISING_INCOMPLETE
+  PORTFOLIO_CANDIDATE
+  NURTURE
+  WEAK_HOLD
+  HUMAN_REQUIRED
+}
+
 model Lead {
   id                   String                @id @default(cuid())
   organizationId       String
@@ -470,6 +480,7 @@ model Lead {
 
   @@index([organizationId, inboxStage])
   @@index([organizationId, status])
+  @@index([organizationId, nextActionAt])
   @@index([listingId])
   @@index([assignedToUserId])
   @@index([sourceChannelType])
@@ -588,6 +599,10 @@ model PropertyRecommendation {
   score     Float
   factors   Json                 @default("{}")
   status    RecommendationStatus @default(SUGGESTED)
+  tourReady Boolean              @default(false)
+  recommendationIntent RecommendationIntent @default(ALTERNATIVE)
+  sharedAt DateTime?
+  prospectResponseAt DateTime?
   createdAt DateTime             @default(now())
   updatedAt DateTime             @updatedAt
 
@@ -675,6 +690,8 @@ model Conversation {
   escalationFlags     AIEscalationFlag[]
 
   @@index([organizationId])
+  @@unique([organizationId, leadId])
+  @@index([organizationId, channelType, externalThreadId])
   @@index([leadId])
   @@index([listingId])
   @@index([channelType])
@@ -857,6 +874,13 @@ enum AIReplyDraftStatus {
   SUPERSEDED
 }
 
+enum RecommendationIntent {
+  ALTERNATIVE
+  UPGRADE
+  DOWNGRADE
+  NEARBY
+}
+
 /// AI-generated draft reply tied to a conversation.
 model AIReplyDraft {
   id               String             @id @default(cuid())
@@ -895,10 +919,12 @@ model LeadStrengthSignal {
   organizationId     String
   leadId             String            @unique
   strengthTier       LeadStrengthTier  @default(UNCERTAIN)
+  strategyBucket     LeadStrategyBucket @default(NURTURE)
   overallScore       Float
   financialFitScore  Float
   intentScore        Float
   completenessScore  Float
+  primaryListingFitScore Float?
   budgetToRentRatio  Float?
   latestIntent       InboundIntentType?
   reasons            Json              @default("[]")
@@ -1099,5 +1125,36 @@ model Lease {
   application   Application?   @relation(fields: [applicationId], references: [id], onDelete: SetNull)
   conversations Conversation[]
 
+  @@index([organizationId, status])
+}
+
+enum AutomationJobType {
+  TOUR_REMINDER
+  LEAD_FOLLOW_UP_DUE
+}
+
+enum AutomationJobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+model AutomationJob {
+  id             String              @id @default(cuid())
+  organizationId String
+  type           AutomationJobType
+  status         AutomationJobStatus @default(PENDING)
+  payload        Json
+  runAt          DateTime
+  attempts       Int                 @default(0)
+  lastError      String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  completedAt    DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([status, runAt])
   @@index([organizationId, status])
 }

@@ -1,18 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { FormEvent, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { signInWithPasswordAction } from "@/server/actions/auth";
 
 export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
   const router = useRouter();
-  const [pendingEmail, setPendingEmail] = useState(false);
   const [pendingGoogle, setPendingGoogle] = useState(false);
+  const [pendingEmail, startEmailTransition] = useTransition();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const redirectPath = callbackUrl || "/leasing";
@@ -31,42 +32,34 @@ export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
       if (error) {
         setErrorMessage(error.message || "Unable to start Google sign-in.");
       }
-    } catch {
-      setErrorMessage("Unable to start Google sign-in right now.");
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : "Unable to start Google sign-in right now.");
     } finally {
       setPendingGoogle(false);
     }
   }
 
-  async function onEmailSubmit(event: FormEvent<HTMLFormElement>) {
+  function onEmailSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setErrorMessage(null);
-    setPendingEmail(true);
 
-    const form = event.currentTarget;
-    const formData = new FormData(form);
-    const email = String(formData.get("email") ?? "").trim().toLowerCase();
-    const password = String(formData.get("password") ?? "");
+    const formData = new FormData(event.currentTarget);
+    formData.set("callbackUrl", redirectPath);
 
-    try {
-      const supabase = getSupabaseBrowserClient();
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+    startEmailTransition(async () => {
+      try {
+        const result = await signInWithPasswordAction(formData);
+        if (!result.ok) {
+          setErrorMessage(result.error || "Invalid email or password.");
+          return;
+        }
 
-      if (!error) {
-        router.replace(redirectPath);
+        router.replace(result.redirectTo);
         router.refresh();
-        return;
+      } catch (e) {
+        setErrorMessage(e instanceof Error ? e.message : "Unable to sign in right now. Please try again.");
       }
-
-      setErrorMessage(error.message || "Invalid email or password.");
-    } catch {
-      setErrorMessage("Unable to sign in right now. Please try again.");
-    } finally {
-      setPendingEmail(false);
-    }
+    });
   }
 
   return (

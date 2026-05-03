@@ -1,4 +1,7 @@
-/** Delayed tour reminders are intentionally disabled with Inngest removal. */
+import { addHours } from "date-fns";
+
+import { enqueueTourReminder } from "@/server/jobs/events";
+
 export async function scheduleTourReminders(params: {
   organizationId: string;
   tourId: string;
@@ -6,5 +9,26 @@ export async function scheduleTourReminders(params: {
   conversationId: string | null;
   scheduledAt: Date;
 }): Promise<void> {
-  void params;
+  await Promise.all([
+    enqueueTourReminder(
+      {
+        organizationId: params.organizationId,
+        tourId: params.tourId,
+        leadId: params.leadId,
+        conversationId: params.conversationId,
+        kind: "24h",
+      },
+      addHours(params.scheduledAt, -24),
+    ),
+    enqueueTourReminder(
+      {
+        organizationId: params.organizationId,
+        tourId: params.tourId,
+        leadId: params.leadId,
+        conversationId: params.conversationId,
+        kind: "1h",
+      },
+      addHours(params.scheduledAt, -1),
+    ),
+  ]);
 }

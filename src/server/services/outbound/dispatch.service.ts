@@ -27,6 +27,7 @@ import { generateAvailableTourSlots } from "@/server/services/tours/slot-generat
 import { sendTransactionalEmail } from "@/server/services/outbound/resend.service";
 import { sendTransactionalSms } from "@/server/services/outbound/twilio.service";
 import { getFactsForAI } from "@/server/services/properties/property-fact.service";
+import { resolveAndExecuteStrategy } from "@/server/services/strategy/strategy-orchestrator.service";
 import { normalizePhoneToE164 } from "@/lib/phone";
 
 async function buildTourOfferLines(
@@ -229,36 +230,39 @@ export async function sendToProspect(
           provider: "twilio",
           providerMessageId: sendResult.id,
         });
-        const message = await logOutboundAutomationMessage(ctx, {
-          conversationId: input.conversationId,
-          leadId: input.leadId,
-          body: input.body,
-          channel,
-          authorType: input.authorType,
-          authorUserId: input.authorUserId,
-          isAiGenerated: input.isAiGenerated,
-          provider: input.provider ?? "twilio",
-          externalId: sendResult.id,
-          channelMetadata: deliveryMetadata("sent", attempts),
-        });
         const normalizedPhone = normalizePhoneToE164(lead.phone);
-        if (normalizedPhone) {
-          await prisma.contactChannelIdentity.upsert({
-            where: {
-              leadId_channelType_handle: {
+        const message = await prisma.$transaction(async (tx) => {
+          const logged = await logOutboundAutomationMessage(ctx, {
+            conversationId: input.conversationId,
+            leadId: input.leadId,
+            body: input.body,
+            channel,
+            authorType: input.authorType,
+            authorUserId: input.authorUserId,
+            isAiGenerated: input.isAiGenerated,
+            provider: input.provider ?? "twilio",
+            externalId: sendResult.id,
+            channelMetadata: deliveryMetadata("sent", attempts),
+          });
+          if (normalizedPhone) {
+            await tx.contactChannelIdentity.upsert({
+              where: {
+                leadId_channelType_handle: {
+                  leadId: input.leadId,
+                  channelType: ListingChannelType.SMS,
+                  handle: normalizedPhone,
+                },
+              },
+              update: {},
+              create: {
                 leadId: input.leadId,
                 channelType: ListingChannelType.SMS,
                 handle: normalizedPhone,
               },
-            },
-            update: {},
-            create: {
-              leadId: input.leadId,
-              channelType: ListingChannelType.SMS,
-              handle: normalizedPhone,
-            },
-          });
-        }
+            });
+          }
+          return logged;
+        });
         console.info("[sendToProspect] result", {
           leadId: input.leadId,
           conversationId: input.conversationId,
@@ -314,114 +318,11 @@ export async function dispatchFirstOutreach(
   leadId: string,
   conversationId: string,
 ): Promise<void> {
-  const lead = await prisma.lead.findFirst({
-    where: { id: leadId, organizationId: ctx.organizationId },
-    include: {
-      listing: { include: { unit: { include: { property: true } } } },
-    },
-  });
-  if (!lead || lead.automationPaused) return;
-  console.info("[dispatch.firstOutreach] enter", {
+  await resolveAndExecuteStrategy(ctx, {
     leadId,
     conversationId,
-    stage: lead.inboxStage,
-    automationPaused: lead.automationPaused,
+    phase: "first_outreach",
   });
-
-  // Include APPLICATION_STARTED: public application flow sets this in the same request as
-  // ingest, often before Inngest runs — previously first outreach was skipped entirely.
-  const firstTouchStages: LeadInboxStage[] = [
-    LeadInboxStage.NEW_INQUIRY,
-    LeadInboxStage.NEW_LEADS,
-    LeadInboxStage.APPLICATION_STARTED,
-    LeadInboxStage.TOUR_SCHEDULED,
-  ];
-  if (!firstTouchStages.includes(lead.inboxStage)) {
-    return;
-  }
-
-  if (await hasOpenEscalationFlags(ctx.organizationId, leadId)) {
-    await prisma.lead.update({
-      where: { id: leadId },
-      data: { automationPaused: true },
-    });
-    return;
-  }
-
-  const outboundCount = await prisma.message.count({
-    where: { conversationId, direction: "OUTBOUND" },
-  });
-  if (outboundCount > 0) return;
-
-  const draft = await prisma.aIReplyDraft.findFirst({
-    where: { conversationId, organizationId: ctx.organizationId },
-    orderBy: { generatedAt: "desc" },
-  });
-
-  await computeLeadStrength(ctx, leadId);
-  const generated = await generateContextualReply(ctx, { conversationId, leadId });
-  const decision = await evaluateAutomationDecision(ctx, {
-    leadId,
-    conversationId,
-    intent: generated.intent,
-    confidence: generated.confidence,
-  });
-  console.info("[dispatch.firstOutreach] decision", {
-    leadId,
-    conversationId,
-    decision: decision.decision,
-    reasons: decision.reasons,
-    intent: generated.intent,
-    confidence: generated.confidence,
-    suggestedChannel: generated.suggestedChannel,
-  });
-
-  if (decision.decision === "ESCALATE") {
-    await prisma.lead.update({
-      where: { id: leadId },
-      data: { automationPaused: true, inboxStage: LeadInboxStage.NEEDS_HUMAN_REVIEW },
-    });
-    return;
-  }
-  if (decision.decision === "WAIT") return;
-
-  if (decision.decision === "DRAFT_FOR_REVIEW") {
-    await prisma.aIReplyDraft.updateMany({
-      where: { conversationId, status: "SUGGESTED" },
-      data: { status: "SUPERSEDED" },
-    });
-    await prisma.aIReplyDraft.create({
-      data: {
-        organizationId: ctx.organizationId,
-        leadId,
-        conversationId,
-        body: generated.body,
-        suggestedChannel: generated.suggestedChannel,
-        contextNote: `Needs review: ${decision.reasons.join(", ")}`,
-        automationConfidence: generated.confidence,
-        status: "SUGGESTED",
-        modelId: generated.modelId,
-        promptVersion: "v5.0",
-      },
-    });
-    return;
-  }
-
-  await sendToProspect(ctx, {
-    leadId,
-    conversationId,
-    body: generated.body,
-    subject: buildOutboundSubject(lead, "inquiry"),
-    preferredChannel:
-      generated.suggestedChannel === "EMAIL" || generated.suggestedChannel === "SMS"
-        ? generated.suggestedChannel
-        : "AUTO",
-    fallbackLabel: "Outreach not sent — no deliverable channel configured",
-  });
-
-  await transitionAfterFirstOutreach(ctx, leadId);
-  const { score } = await getQualificationCompleteness(leadId);
-  await transitionOnQualificationThreshold(ctx, leadId, score);
 }
 
 /**
@@ -433,85 +334,11 @@ export async function dispatchAutomationReply(
   leadId: string,
   conversationId: string,
 ): Promise<void> {
-  const lead = await prisma.lead.findFirst({
-    where: { id: leadId, organizationId: ctx.organizationId },
-    include: {
-      listing: { include: { unit: { include: { property: true } } } },
-    },
-  });
-  if (!lead || lead.automationPaused) return;
-
-  if (await hasOpenEscalationFlags(ctx.organizationId, leadId)) {
-    await prisma.lead.update({
-      where: { id: leadId },
-      data: { automationPaused: true },
-    });
-    return;
-  }
-
-  const lastInbound = await prisma.message.findFirst({
-    where: { conversationId, direction: "INBOUND" },
-    orderBy: { sentAt: "desc" },
-  });
-  const lastOutbound = await prisma.message.findFirst({
-    where: { conversationId, direction: "OUTBOUND" },
-    orderBy: { sentAt: "desc" },
-  });
-  if (!lastInbound) return;
-  if (lastOutbound && lastOutbound.sentAt >= lastInbound.sentAt) return;
-
-  await transitionOnProspectReply(ctx, leadId);
-  await computeLeadStrength(ctx, leadId);
-  const generated = await generateContextualReply(ctx, { conversationId, leadId });
-  const decision = await evaluateAutomationDecision(ctx, {
+  await resolveAndExecuteStrategy(ctx, {
     leadId,
     conversationId,
-    intent: generated.intent,
-    confidence: generated.confidence,
+    phase: "reply",
   });
-  if (decision.decision === "ESCALATE") {
-    await prisma.lead.update({
-      where: { id: leadId },
-      data: { automationPaused: true, inboxStage: LeadInboxStage.NEEDS_HUMAN_REVIEW },
-    });
-    return;
-  }
-  if (decision.decision === "WAIT") return;
-  if (decision.decision === "DRAFT_FOR_REVIEW") {
-    await prisma.aIReplyDraft.updateMany({
-      where: { conversationId, status: "SUGGESTED" },
-      data: { status: "SUPERSEDED" },
-    });
-    await prisma.aIReplyDraft.create({
-      data: {
-        organizationId: ctx.organizationId,
-        leadId,
-        conversationId,
-        body: generated.body,
-        suggestedChannel: generated.suggestedChannel,
-        contextNote: `Needs review: ${decision.reasons.join(", ")}`,
-        automationConfidence: generated.confidence,
-        status: "SUGGESTED",
-        modelId: generated.modelId,
-        promptVersion: "v5.0",
-      },
-    });
-    return;
-  }
-
-  await sendToProspect(ctx, {
-    leadId,
-    conversationId,
-    body: generated.body,
-    subject: buildOutboundSubject(lead, "reply"),
-    preferredChannel:
-      generated.suggestedChannel === "EMAIL" || generated.suggestedChannel === "SMS"
-        ? generated.suggestedChannel
-        : "AUTO",
-    fallbackLabel: "Reply not sent — no deliverable channel configured",
-  });
-  const { score } = await getQualificationCompleteness(leadId);
-  await transitionOnQualificationThreshold(ctx, leadId, score);
 }
 
 export async function dispatchLeadFollowUp(

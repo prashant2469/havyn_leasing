@@ -31,6 +31,9 @@ async function _generateSuggestedActions(leadId: string): Promise<ActionSuggesti
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
     include: {
+      strengthSignal: {
+        select: { strategyBucket: true, strengthTier: true, overallScore: true },
+      },
       conversations: {
         include: {
           messages: { orderBy: { sentAt: "desc" }, take: 1 },
@@ -59,6 +62,60 @@ async function _generateSuggestedActions(leadId: string): Promise<ActionSuggesti
   const gapLabels = await qualificationGapLabelsForLead(leadId);
   const gapEvidence =
     gapLabels.length > 0 ? `Evidence: still missing — ${gapLabels.slice(0, 4).join("; ")}.` : "Evidence: V4 qualification set is complete.";
+  const bucket = lead.strengthSignal?.strategyBucket ?? "NURTURE";
+
+  if (bucket === "HUMAN_REQUIRED") {
+    actions.push({
+      actionType: "HAND_OFF_TO_HUMAN",
+      title: "Escalate to leasing specialist",
+      description: "Strategy bucket indicates policy/sensitivity risk. Route to human operator.",
+      priority: 120,
+    });
+    return actions;
+  }
+
+  if (bucket === "PORTFOLIO_CANDIDATE") {
+    actions.push({
+      actionType: "SHARE_RECOMMENDATIONS",
+      title: "Share portfolio alternatives",
+      description:
+        "Primary listing fit is weak. Send top portfolio matches first, then offer tours for the strongest match.",
+      priority: 105,
+    });
+    actions.push({
+      actionType: "SCHEDULE_RECOMMENDED_TOUR",
+      title: "Offer tour on recommended listing",
+      description: "Lead is better aligned to alternatives than the current listing.",
+      priority: 97,
+    });
+  }
+
+  if (bucket === "PROMISING_INCOMPLETE") {
+    actions.push({
+      actionType: "ASK_QUALIFICATION",
+      title: "Close qualification gaps before tour",
+      description: `Promising lead, but missing decision-critical data. ${gapEvidence}`,
+      priority: 101,
+    });
+  }
+
+  if (bucket === "TOUR_READY" && !hasTour) {
+    actions.push({
+      actionType: "OFFER_TOUR_TIMES",
+      title: "Offer tour windows now",
+      description: "Strategy bucket is TOUR_READY — convert momentum into a scheduled showing.",
+      priority: 102,
+    });
+  }
+
+  if (bucket === "WEAK_HOLD") {
+    actions.push({
+      actionType: "FOLLOW_UP_24H",
+      title: "Gentle nurture follow-up",
+      description: "Weak signal lead — keep warm with a low-pressure check-in.",
+      priority: 35,
+    });
+  }
 
   if (!hasResponse && latestMessage) {
     actions.push({

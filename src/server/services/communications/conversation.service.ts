@@ -39,6 +39,7 @@ export async function listMessagesForLead(ctx: OrgContext, leadId: string) {
     include: {
       messages: {
         orderBy: { sentAt: "asc" },
+        take: 100,
         include: {
           authorUser: { select: { id: true, name: true, email: true } },
           events: { orderBy: { occurredAt: "desc" }, take: 5 },

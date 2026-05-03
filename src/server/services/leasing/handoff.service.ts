@@ -17,19 +17,23 @@ export async function recordHumanHandoff(
   });
   if (!lead) throw new Error("Lead not found");
 
-  const event = await prisma.humanHandoffEvent.create({
-    data: {
-      organizationId: ctx.organizationId,
-      leadId: input.leadId,
-      fromUserId: ctx.userId,
-      toUserId: input.toUserId ?? null,
-      reason: input.reason ?? null,
-    },
-  });
+  const event = await prisma.$transaction(async (tx) => {
+    const created = await tx.humanHandoffEvent.create({
+      data: {
+        organizationId: ctx.organizationId,
+        leadId: input.leadId,
+        fromUserId: ctx.userId,
+        toUserId: input.toUserId ?? null,
+        reason: input.reason ?? null,
+      },
+    });
 
-  await prisma.lead.update({
-    where: { id: input.leadId },
-    data: { inboxStage: LeadInboxStage.NEEDS_HUMAN_REVIEW },
+    await tx.lead.update({
+      where: { id: input.leadId },
+      data: { inboxStage: LeadInboxStage.NEEDS_HUMAN_REVIEW },
+    });
+
+    return created;
   });
 
   await logActivity({

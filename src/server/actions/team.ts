@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { requireOrgContext } from "@/server/auth/context";
-import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getSupabaseAdminClient } from "@/server/supabase/admin";
 import { Permission } from "@/server/auth/permissions";
 import { requirePermission } from "@/server/auth/require-permission";
 import { prisma } from "@/server/db/client";
@@ -23,6 +23,46 @@ const updateMemberRoleSchema = z.object({
 const removeMemberSchema = z.object({
   membershipId: z.string().cuid(),
 });
+
+export async function resetTeamToOwnerOnlyAction() {
+  try {
+    const ctx = await requireOrgContext();
+    await requirePermission(ctx, Permission.TEAM_MANAGE_ROLES);
+    if (ctx.role !== MembershipRole.OWNER && ctx.role !== MembershipRole.ADMIN) {
+      throw new Error("Only owner or admin can reset team memberships.");
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.membership.deleteMany({
+        where: {
+          organizationId: ctx.organizationId,
+          userId: { not: ctx.userId },
+        },
+      });
+
+      await tx.membership.upsert({
+        where: {
+          userId_organizationId: {
+            userId: ctx.userId,
+            organizationId: ctx.organizationId,
+          },
+        },
+        update: { role: MembershipRole.OWNER },
+        create: {
+          userId: ctx.userId,
+          organizationId: ctx.organizationId,
+          role: MembershipRole.OWNER,
+        },
+      });
+    });
+
+    revalidatePath("/settings");
+    return { ok: true as const, message: "Team reset complete. You are now the sole OWNER." };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to reset team memberships";
+    return { ok: false as const, message };
+  }
+}
 
 async function ensureOwnerNotRemoved(organizationId: string, priorRole: MembershipRole): Promise<void> {
   if (priorRole !== MembershipRole.OWNER) return;

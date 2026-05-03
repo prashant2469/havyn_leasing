@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { DevAuthError, requireOrgContext } from "@/server/auth/context";
+import { jsonApiError, serializePrismaForJson } from "@/lib/api-route-response";
+import { requireOrgContext } from "@/server/auth/context";
 import { listActivityForEntity } from "@/server/services/activity/activity.service";
 import { listAIActionsForLead } from "@/server/services/ai/ai-action.service";
 import { loadCopilotContext } from "@/server/services/ai/ai-copilot.service";
@@ -16,24 +17,27 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   try {
     const ctx = await requireOrgContext();
     const { id } = await params;
-    const [lead, conversation, activities, aiActions, timeline, recommendations, units] = await Promise.all([
+    const [lead, conversation, activities, aiActions, timeline, recommendations] = await Promise.all([
       getLeadById(ctx, id),
       listMessagesForLead(ctx, id),
       listActivityForEntity(ctx, "Lead", id),
       listAIActionsForLead(ctx, id),
       getLeadTimeline(ctx, id),
       listRecommendationsForLead(ctx, id),
-      prisma.unit.findMany({
-        where: { property: { organizationId: ctx.organizationId } },
-        orderBy: [{ property: { name: "asc" } }, { unitNumber: "asc" }],
-        select: {
-          id: true,
-          unitNumber: true,
-          property: { select: { name: true } },
-        },
-      }),
     ]);
     if (!lead) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const relevantPropertyId = lead.propertyId ?? lead.listing?.unit?.property?.id ?? null;
+    const units = relevantPropertyId
+      ? await prisma.unit.findMany({
+          where: { propertyId: relevantPropertyId, property: { organizationId: ctx.organizationId } },
+          orderBy: { unitNumber: "asc" },
+          select: {
+            id: true,
+            unitNumber: true,
+            property: { select: { name: true } },
+          },
+        })
+      : [];
 
     // Resolve reply strategy and load V3 copilot context in parallel
     let replyStrategy = null;
@@ -73,20 +77,18 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         : null;
 
     return NextResponse.json({
-      lead: JSON.parse(JSON.stringify(lead)),
-      conversation: conversation ? JSON.parse(JSON.stringify(conversation)) : null,
-      activities: JSON.parse(JSON.stringify(activities)),
-      aiActions: JSON.parse(JSON.stringify(aiActions)),
-      timeline: JSON.parse(JSON.stringify(timeline)),
-      recommendations: JSON.parse(JSON.stringify(recommendations)),
-      units: JSON.parse(JSON.stringify(units)),
-      smsConsent: smsConsent ? JSON.parse(JSON.stringify(smsConsent)) : null,
+      lead: serializePrismaForJson(lead),
+      conversation: conversation ? serializePrismaForJson(conversation) : null,
+      activities: serializePrismaForJson(activities),
+      aiActions: serializePrismaForJson(aiActions),
+      timeline: serializePrismaForJson(timeline),
+      recommendations: serializePrismaForJson(recommendations),
+      units: serializePrismaForJson(units),
+      smsConsent: smsConsent ? serializePrismaForJson(smsConsent) : null,
       replyStrategy,
-      copilotContext: copilotContext ? JSON.parse(JSON.stringify(copilotContext)) : null,
+      copilotContext: copilotContext ? serializePrismaForJson(copilotContext) : null,
     });
   } catch (e) {
-    const message = e instanceof DevAuthError ? e.message : "Unauthorized";
-    const status = e instanceof DevAuthError ? 401 : 500;
-    return NextResponse.json({ error: message }, { status });
+    return jsonApiError(e);
   }
 }

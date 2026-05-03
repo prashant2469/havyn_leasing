@@ -9,14 +9,15 @@ import { LoginForm } from "./login-form";
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ callbackUrl?: string }>;
+  searchParams?: Promise<{ callbackUrl?: string; next?: string }>;
 }) {
+  const sp = await searchParams;
   const session = await auth();
   if (session?.user?.email) {
-    redirect("/");
+    redirect(normalizeAuthRedirect(sp?.callbackUrl ?? sp?.next));
   }
 
-  const callbackUrl = normalizeAuthRedirect((await searchParams)?.callbackUrl);
+  const callbackUrl = normalizeAuthRedirect(sp?.callbackUrl ?? sp?.next);
 
   return (
     <div className="bg-muted/30 flex min-h-svh flex-col items-center justify-center p-6">

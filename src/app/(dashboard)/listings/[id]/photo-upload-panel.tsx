@@ -54,6 +54,10 @@ export function PhotoUploadPanel({ listingId, photos }: Props) {
         contentType: file.type || "application/octet-stream",
       }),
     });
+    const contentType = presignResp.headers.get("content-type") ?? "";
+    if (!contentType.includes("application/json")) {
+      throw new Error(`Upload API returned unexpected response (${presignResp.status}).`);
+    }
     const presign = (await presignResp.json()) as PresignResponse | { error: string };
     if (!presignResp.ok || !("uploadUrl" in presign)) {
       throw new Error("Unable to create upload URL.");

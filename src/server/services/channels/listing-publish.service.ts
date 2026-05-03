@@ -68,16 +68,6 @@ async function completeSyncRun(
     lastUnpublishedAt?: Date;
   },
 ) {
-  await prisma.listingChannelSync.update({
-    where: { id: syncId },
-    data: {
-      status: result.status,
-      completedAt: new Date(),
-      errorMessage: result.errorMessage ?? null,
-      resultPayload: (result.resultPayload ?? {}) as Prisma.InputJsonValue,
-    },
-  });
-
   const channelUpdate: Record<string, unknown> = {
     lastSyncedAt: new Date(),
     lastSyncError: result.lastSyncError ?? null,
@@ -94,9 +84,21 @@ async function completeSyncRun(
   if (result.lastPublishedAt) channelUpdate.lastPublishedAt = result.lastPublishedAt;
   if (result.lastUnpublishedAt) channelUpdate.lastUnpublishedAt = result.lastUnpublishedAt;
 
-  await prisma.listingChannel.update({
-    where: { id: channelId },
-    data: channelUpdate,
+  await prisma.$transaction(async (tx) => {
+    await tx.listingChannelSync.update({
+      where: { id: syncId },
+      data: {
+        status: result.status,
+        completedAt: new Date(),
+        errorMessage: result.errorMessage ?? null,
+        resultPayload: (result.resultPayload ?? {}) as Prisma.InputJsonValue,
+      },
+    });
+
+    await tx.listingChannel.update({
+      where: { id: channelId },
+      data: channelUpdate,
+    });
   });
 }
 

@@ -1,4 +1,12 @@
-import { type LeadInboxStage, type LeadStatus, NextActionType, TourStatus } from "@prisma/client";
+import {
+  type AIReplyDraftStatus,
+  type LeadInboxStage,
+  type LeadPriorityTier,
+  type LeadStatus,
+  type LeadStrengthTier,
+  NextActionType,
+  TourStatus,
+} from "@prisma/client";
 
 import { ActivityVerbs } from "@/domains/activity/verbs";
 import type { OrgContext } from "@/server/auth/context";
@@ -25,10 +33,128 @@ async function listingSummaryMap(
   return new Map(rows.map((r) => [r.id, r]));
 }
 
-export async function listLeads(ctx: OrgContext) {
+/**
+ * Copilot / inbox signals are loaded in separate queries so list endpoints do not rely on
+ * nested `Lead` includes. Matches `getLeadById` and avoids Prisma client drift when
+ * `prisma generate` was not re-run after schema changes (unknown include field errors).
+ */
+async function hydrateLeadListCopilotFields<T extends { id: string; listingId: string | null }>(
+  ctx: OrgContext,
+  leads: T[],
+): Promise<
+  Array<
+    T & {
+      prioritySignal: {
+        priorityTier: LeadPriorityTier;
+        isAtRisk: boolean;
+        needsImmediateResponse: boolean;
+      } | null;
+      strengthSignal: {
+        strategyBucket: import("@prisma/client").LeadStrategyBucket;
+        strengthTier: LeadStrengthTier;
+        overallScore: number;
+      } | null;
+      replyDrafts: { id: string; status: AIReplyDraftStatus }[];
+      escalationFlags: { id: string }[];
+    }
+  >
+> {
+  const leadIds = leads.map((l) => l.id);
+  if (leadIds.length === 0) {
+    return leads.map((l) => ({
+      ...l,
+      prioritySignal: null,
+      strengthSignal: null,
+      replyDrafts: [] as { id: string; status: AIReplyDraftStatus }[],
+      escalationFlags: [] as { id: string }[],
+    }));
+  }
+
+  const [priorities, strengths, drafts, flags] = await Promise.all([
+    prisma.leadPrioritySignal.findMany({
+      where: { organizationId: ctx.organizationId, leadId: { in: leadIds } },
+      select: { leadId: true, priorityTier: true, isAtRisk: true, needsImmediateResponse: true },
+    }),
+    prisma.leadStrengthSignal.findMany({
+      where: { organizationId: ctx.organizationId, leadId: { in: leadIds } },
+      select: { leadId: true, strategyBucket: true, strengthTier: true, overallScore: true },
+    }),
+    prisma.aIReplyDraft.findMany({
+      where: {
+        organizationId: ctx.organizationId,
+        leadId: { in: leadIds },
+        status: { in: ["SUGGESTED", "APPROVED"] },
+      },
+      select: { leadId: true, id: true, status: true, generatedAt: true },
+      orderBy: { generatedAt: "desc" },
+    }),
+    prisma.aIEscalationFlag.findMany({
+      where: {
+        organizationId: ctx.organizationId,
+        leadId: { in: leadIds },
+        status: { in: ["OPEN", "ACKNOWLEDGED"] },
+      },
+      select: { leadId: true, id: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
+
+  const priorityByLead = new Map(
+    priorities.map((p) => [
+      p.leadId,
+      {
+        priorityTier: p.priorityTier,
+        isAtRisk: p.isAtRisk,
+        needsImmediateResponse: p.needsImmediateResponse,
+      },
+    ]),
+  );
+  const strengthByLead = new Map(
+    strengths.map((s) => [
+      s.leadId,
+      {
+        strategyBucket: s.strategyBucket,
+        strengthTier: s.strengthTier,
+        overallScore: s.overallScore,
+      },
+    ]),
+  );
+
+  const draftByLead = new Map<string, { id: string; status: AIReplyDraftStatus }[]>();
+  for (const d of drafts) {
+    if (draftByLead.has(d.leadId)) continue;
+    draftByLead.set(d.leadId, [{ id: d.id, status: d.status }]);
+  }
+
+  const flagByLead = new Map<string, { id: string }[]>();
+  for (const f of flags) {
+    if (flagByLead.has(f.leadId)) continue;
+    flagByLead.set(f.leadId, [{ id: f.id }]);
+  }
+
+  return leads.map((l) => ({
+    ...l,
+    prioritySignal: priorityByLead.get(l.id) ?? null,
+    strengthSignal: strengthByLead.get(l.id) ?? null,
+    replyDrafts: draftByLead.get(l.id) ?? [],
+    escalationFlags: flagByLead.get(l.id) ?? [],
+  }));
+}
+
+type LeadListOptions = {
+  take?: number;
+  cursorId?: string | null;
+};
+
+export async function listLeads(ctx: OrgContext, options?: LeadListOptions) {
+  const take = Math.min(Math.max(options?.take ?? 50, 1), 200);
   const leads = await prisma.lead.findMany({
-    where: { organizationId: ctx.organizationId },
-    orderBy: { updatedAt: "desc" },
+    where: {
+      organizationId: ctx.organizationId,
+      ...(options?.cursorId ? { id: { lt: options.cursorId } } : {}),
+    },
+    orderBy: { id: "desc" },
+    take,
     include: {
       assignedTo: { select: { id: true, name: true, email: true } },
       property: { select: { id: true, name: true } },
@@ -44,42 +170,37 @@ export async function listLeads(ctx: OrgContext) {
         take: 1,
         select: { id: true, status: true },
       },
-      prioritySignal: {
-        select: { priorityTier: true, isAtRisk: true, needsImmediateResponse: true },
-      },
-      strengthSignal: {
-        select: { strengthTier: true, overallScore: true },
-      },
-      replyDrafts: {
-        where: { status: { in: ["SUGGESTED", "APPROVED"] } },
-        select: { id: true, status: true },
-        take: 1,
-      },
-      escalationFlags: {
-        where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } },
-        select: { id: true },
-        take: 1,
-      },
       _count: {
         select: { recommendations: true },
       },
     },
   });
+  const withSignals = await hydrateLeadListCopilotFields(ctx, leads);
   const map = await listingSummaryMap(
     ctx,
-    leads.map((l) => l.listingId).filter((id): id is string => id != null),
+    withSignals.map((l) => l.listingId).filter((id): id is string => id != null),
   );
-  return leads.map((l) => ({
+  return withSignals.map((l) => ({
     ...l,
     listing: l.listingId ? (map.get(l.listingId) ?? null) : null,
   }));
 }
 
-export async function listLeadsByInboxStages(ctx: OrgContext, stages: LeadInboxStage[]) {
+export async function listLeadsByInboxStages(
+  ctx: OrgContext,
+  stages: LeadInboxStage[],
+  options?: LeadListOptions,
+) {
   if (stages.length === 0) return [];
+  const take = Math.min(Math.max(options?.take ?? 50, 1), 200);
   const leads = await prisma.lead.findMany({
-    where: { organizationId: ctx.organizationId, inboxStage: { in: stages } },
-    orderBy: { updatedAt: "desc" },
+    where: {
+      organizationId: ctx.organizationId,
+      inboxStage: { in: stages },
+      ...(options?.cursorId ? { id: { lt: options.cursorId } } : {}),
+    },
+    orderBy: { id: "desc" },
+    take,
     include: {
       assignedTo: { select: { id: true, name: true, email: true } },
       primaryUnit: { select: { id: true, unitNumber: true } },
@@ -94,39 +215,28 @@ export async function listLeadsByInboxStages(ctx: OrgContext, stages: LeadInboxS
         take: 1,
         select: { id: true, status: true },
       },
-      prioritySignal: {
-        select: { priorityTier: true, isAtRisk: true, needsImmediateResponse: true },
-      },
-      strengthSignal: {
-        select: { strengthTier: true, overallScore: true },
-      },
-      replyDrafts: {
-        where: { status: { in: ["SUGGESTED", "APPROVED"] } },
-        select: { id: true, status: true },
-        take: 1,
-      },
-      escalationFlags: {
-        where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } },
-        select: { id: true },
-        take: 1,
-      },
       _count: {
         select: { recommendations: true },
       },
     },
   });
+  const withSignals = await hydrateLeadListCopilotFields(ctx, leads);
   const map = await listingSummaryMap(
     ctx,
-    leads.map((l) => l.listingId).filter((id): id is string => id != null),
+    withSignals.map((l) => l.listingId).filter((id): id is string => id != null),
   );
-  return leads.map((l) => ({
+  return withSignals.map((l) => ({
     ...l,
     listing: l.listingId ? (map.get(l.listingId) ?? null) : null,
   }));
 }
 
-export async function listLeadsByInboxStage(ctx: OrgContext, stage: LeadInboxStage) {
-  return listLeadsByInboxStages(ctx, [stage]);
+export async function listLeadsByInboxStage(
+  ctx: OrgContext,
+  stage: LeadInboxStage,
+  options?: LeadListOptions,
+) {
+  return listLeadsByInboxStages(ctx, [stage], options);
 }
 
 /**

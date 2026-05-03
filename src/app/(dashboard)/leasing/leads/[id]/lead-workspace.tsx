@@ -269,6 +269,8 @@ export function LeadWorkspace({
     id: string;
     leadId: string;
     score: number;
+    tourReady: boolean;
+    recommendationIntent: "ALTERNATIVE" | "UPGRADE" | "DOWNGRADE" | "NEARBY";
     status: RecommendationStatus;
     listing: {
       id: string;
@@ -485,7 +487,25 @@ export function LeadWorkspace({
                     {recommendations.map((r: (typeof recommendations)[number]) => (
                       <RecommendationCard
                         key={r.id}
-                        recommendation={r}
+                        recommendation={{
+                          ...r,
+                          tourReady: Boolean(r.tourReady),
+                          recommendationIntent:
+                            (r.recommendationIntent as
+                              | "ALTERNATIVE"
+                              | "UPGRADE"
+                              | "DOWNGRADE"
+                              | "NEARBY") ?? "ALTERNATIVE",
+                          status: r.status as
+                            | "SUGGESTED"
+                            | "SHARED_WITH_PROSPECT"
+                            | "PROSPECT_INTERESTED"
+                            | "DISMISSED",
+                          listing: {
+                            ...r.listing,
+                            monthlyRent: String(r.listing.monthlyRent),
+                          },
+                        }}
                         onDone={() => router.refresh()}
                       />
                     ))}

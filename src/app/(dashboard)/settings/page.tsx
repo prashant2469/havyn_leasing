@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { Prisma } from "@prisma/client";
+import { MembershipRole, Prisma } from "@prisma/client";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,6 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { auth } from "@/auth";
 import { tryOrgContext } from "@/server/auth/context";
 import { Permission, hasPermission } from "@/server/auth/permissions";
 import { prisma } from "@/server/db/client";
@@ -20,6 +21,7 @@ import { CreateResidentForm } from "./create-resident-form";
 import { InviteTeamMemberForm } from "./invite-team-member-form";
 import { TeamMemberActions } from "./team-member-actions";
 import { GoogleCalendarSettingsCard } from "./google-calendar-settings-card";
+import { ResetTeamForm } from "./reset-team-form";
 
 export default async function SettingsPage({
   searchParams,
@@ -27,7 +29,7 @@ export default async function SettingsPage({
   searchParams: Promise<{ googleCalendar?: string }>;
 }) {
   const { googleCalendar } = await searchParams;
-  const ctx = await tryOrgContext();
+  const [ctx, session] = await Promise.all([tryOrgContext(), auth()]);
   if (!ctx) {
     redirect("/login");
   }
@@ -72,6 +74,7 @@ export default async function SettingsPage({
   const canInvite = hasPermission(ctx.role, Permission.TEAM_INVITE);
   const canManageRoles = hasPermission(ctx.role, Permission.TEAM_MANAGE_ROLES);
   const canEditSettings = hasPermission(ctx.role, Permission.SETTINGS_EDIT);
+  const canResetTeam = ctx.role === MembershipRole.OWNER;
 
   return (
     <div className="space-y-8">
@@ -87,6 +90,18 @@ export default async function SettingsPage({
         <CardContent className="text-muted-foreground text-sm">
           <p className="font-medium text-foreground">{org?.name}</p>
           <p>Slug: {org?.slug}</p>
+          <p>
+            Signed in as:{" "}
+            <span className="font-semibold text-foreground">
+              {session?.user?.email ?? "—"}
+            </span>
+          </p>
+          <p>
+            Workspace user id: <code className="rounded bg-muted px-1 text-foreground">{ctx.userId}</code>
+          </p>
+          <p>
+            Active role: <span className="font-semibold text-foreground">{ctx.role}</span>
+          </p>
           <p className="mt-2">
             Keep{" "}
             <code className="rounded bg-muted px-1">organizationId</code> on every query.
@@ -100,6 +115,7 @@ export default async function SettingsPage({
         </CardHeader>
         <CardContent className="space-y-5 p-6">
           <InviteTeamMemberForm canInvite={canInvite} />
+          <ResetTeamForm canReset={canResetTeam} />
           <Table>
             <TableHeader>
               <TableRow>

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { jsonApiError } from "@/lib/api-route-response";
 import { requireOrgContext } from "@/server/auth/context";
 import {
   exchangeGoogleAuthCode,
@@ -39,7 +40,11 @@ export async function GET(request: Request) {
       calendarId: "primary",
     });
     return NextResponse.redirect(new URL("/settings?googleCalendar=connected", request.url));
-  } catch {
-    return NextResponse.redirect(new URL("/settings?googleCalendar=error", request.url));
+  } catch (error) {
+    if (error instanceof Error) {
+      console.warn("[google-calendar-callback]", error.message);
+      return NextResponse.redirect(new URL("/settings?googleCalendar=error", request.url));
+    }
+    return jsonApiError(error);
   }
 }

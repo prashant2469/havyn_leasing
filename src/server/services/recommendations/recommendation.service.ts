@@ -1,8 +1,12 @@
-import { ListingStatus, RecommendationStatus } from "@prisma/client";
+import { ListingStatus, RecommendationIntent, RecommendationStatus } from "@prisma/client";
+import { addDays } from "date-fns";
 
 import type { OrgContext } from "@/server/auth/context";
 import { prisma } from "@/server/db/client";
+import { getQualificationCompleteness } from "@/server/services/leasing/qualification-score.service";
 import { scoreListing } from "@/server/services/recommendations/scoring";
+import { getBusyRangesForProperty } from "@/server/services/tours/availability.service";
+import { generateAvailableTourSlots } from "@/server/services/tours/slot-generator.service";
 
 function readQualValue(
   answers: Array<{ key: string; value: unknown }>,
@@ -20,12 +24,59 @@ function toNumber(v: unknown): number | undefined {
   return undefined;
 }
 
+async function tourAvailabilityScore(input: {
+  organizationId: string;
+  propertyId: string;
+  schedule: unknown;
+}): Promise<number> {
+  const now = new Date();
+  const within7 = await getBusyRangesForProperty(
+    input.organizationId,
+    input.propertyId,
+    now,
+    addDays(now, 7),
+  );
+  const slots7 = generateAvailableTourSlots(input.schedule, now, 2, within7).length;
+  if (slots7 > 0) return 1;
+
+  const within14 = await getBusyRangesForProperty(
+    input.organizationId,
+    input.propertyId,
+    now,
+    addDays(now, 14),
+  );
+  const slots14 = generateAvailableTourSlots(input.schedule, now, 2, within14).length;
+  if (slots14 > 0) return 0.5;
+  return 0;
+}
+
+function resolveRecommendationIntent(input: {
+  monthlyBudget?: number;
+  listingRent: number;
+  propertyInterest?: string;
+  neighborhood: string | null;
+}): RecommendationIntent {
+  if (
+    input.propertyInterest?.trim() &&
+    input.neighborhood?.trim() &&
+    input.propertyInterest.toLowerCase().includes(input.neighborhood.toLowerCase())
+  ) {
+    return RecommendationIntent.NEARBY;
+  }
+  if (input.monthlyBudget != null) {
+    if (input.listingRent <= input.monthlyBudget * 0.9) return RecommendationIntent.DOWNGRADE;
+    if (input.listingRent >= input.monthlyBudget * 1.1) return RecommendationIntent.UPGRADE;
+  }
+  return RecommendationIntent.ALTERNATIVE;
+}
+
 export async function generateRecommendations(ctx: OrgContext, leadId: string) {
   const lead = await prisma.lead.findFirst({
     where: { id: leadId, organizationId: ctx.organizationId },
     select: { id: true, listingId: true, qualifications: { select: { key: true, value: true } } },
   });
   if (!lead) throw new Error("Lead not found");
+  const { score: completenessScore } = await getQualificationCompleteness(leadId);
 
   const monthlyBudget = toNumber(readQualValue(lead.qualifications, "monthlyBudget"));
   const bedrooms = toNumber(readQualValue(lead.qualifications, "bedrooms"));
@@ -47,9 +98,8 @@ export async function generateRecommendations(ctx: OrgContext, leadId: string) {
     },
   });
 
-  const upserts = listings
-    .filter((l) => l.id !== lead.listingId)
-    .map((l) => {
+  const upserts = [];
+  for (const l of listings.filter((row) => row.id !== lead.listingId)) {
       const property = l.unit.property;
       const listingAmenities = Array.isArray(l.amenities) ? l.amenities.map((x) => String(x)) : [];
       const propertyAmenities = Array.isArray(property.amenities)
@@ -60,6 +110,11 @@ export async function generateRecommendations(ctx: OrgContext, leadId: string) {
           ? (property.petRules as Record<string, unknown>)
           : {};
 
+      const availabilityFactor = await tourAvailabilityScore({
+        organizationId: ctx.organizationId,
+        propertyId: property.id,
+        schedule: property.showingSchedule,
+      });
       const { total, factors } = scoreListing(
         {
           monthlyBudget,
@@ -73,14 +128,23 @@ export async function generateRecommendations(ctx: OrgContext, leadId: string) {
           monthlyRent: Number(l.monthlyRent),
           bedrooms: l.bedrooms,
           availableFrom: l.availableFrom,
+          createdAt: l.createdAt,
           title: l.title,
           propertyName: property.name,
           neighborhood: property.neighborhood,
           listingAmenities,
           propertyAmenities,
           petRules,
+          tourAvailabilityScore: availabilityFactor,
         },
       );
+      const intent = resolveRecommendationIntent({
+        monthlyBudget,
+        listingRent: Number(l.monthlyRent),
+        propertyInterest,
+        neighborhood: property.neighborhood,
+      });
+      const tourReady = total >= 0.6 && availabilityFactor >= 0.5 && completenessScore >= 0.5;
 
       const prevStatus = l.recommendations[0]?.status;
       const status =
@@ -88,7 +152,8 @@ export async function generateRecommendations(ctx: OrgContext, leadId: string) {
           ? prevStatus
           : RecommendationStatus.SUGGESTED;
 
-      return prisma.propertyRecommendation.upsert({
+      upserts.push(
+        prisma.propertyRecommendation.upsert({
         where: { leadId_listingId: { leadId, listingId: l.id } },
         create: {
           leadId,
@@ -96,14 +161,19 @@ export async function generateRecommendations(ctx: OrgContext, leadId: string) {
           score: total,
           factors,
           status,
+          tourReady,
+          recommendationIntent: intent,
         },
         update: {
           score: total,
           factors,
           status,
+          tourReady,
+          recommendationIntent: intent,
         },
-      });
-    });
+        }),
+      );
+  }
 
   if (upserts.length === 0) return [];
   await prisma.$transaction(upserts);
@@ -132,6 +202,7 @@ export async function listRecommendationsForLead(ctx: OrgContext, leadId: string
   return prisma.propertyRecommendation.findMany({
     where: { leadId, lead: { organizationId: ctx.organizationId } },
     orderBy: [{ score: "desc" }, { updatedAt: "desc" }],
+    take: 20,
     include: {
       listing: {
         select: {

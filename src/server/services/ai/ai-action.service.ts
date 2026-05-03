@@ -13,6 +13,7 @@ export async function listAIActionsForLead(ctx: OrgContext, leadId: string) {
   return prisma.aIAction.findMany({
     where: { organizationId: ctx.organizationId, leadId },
     orderBy: { createdAt: "desc" },
+    take: 50,
     include: { reviewedBy: { select: { id: true, name: true } } },
   });
 }

@@ -1,3 +1,4 @@
+import { jsonApiError } from "@/lib/api-route-response";
 import { getZillowRentalFeedXmlForOrganization } from "@/server/services/zillow/zillow-rental-feed.service";
 
 export const runtime = "nodejs";
@@ -17,18 +18,20 @@ function tokenOk(req: Request, url: URL): boolean {
  * Set `ZILLOW_RENTAL_FEED_ENABLED=true` and `ZILLOW_RENTAL_FEED_ORG_ID` (and contact env) to enable.
  */
 export async function GET(req: Request) {
-  if (process.env.ZILLOW_RENTAL_FEED_ENABLED !== "true") {
-    return new Response("Not found", { status: 404 });
-  }
-  const orgId = process.env.ZILLOW_RENTAL_FEED_ORG_ID?.trim();
-  if (!orgId) {
-    return new Response("Zillow feed is not configured (ZILLOW_RENTAL_FEED_ORG_ID).", { status: 503 });
-  }
-  const url = new URL(req.url);
-  if (!tokenOk(req, url)) {
-    return new Response("Unauthorized", { status: 401 });
-  }
   try {
+    if (process.env.ZILLOW_RENTAL_FEED_ENABLED !== "true") {
+      return new Response("Not found", { status: 404 });
+    }
+    const orgId = process.env.ZILLOW_RENTAL_FEED_ORG_ID?.trim();
+    if (!orgId) {
+      return new Response("Zillow feed is not configured (ZILLOW_RENTAL_FEED_ORG_ID).", {
+        status: 503,
+      });
+    }
+    const url = new URL(req.url);
+    if (!tokenOk(req, url)) {
+      return new Response("Unauthorized", { status: 401 });
+    }
     const xml = await getZillowRentalFeedXmlForOrganization(orgId);
     return new Response(xml, {
       status: 200,
@@ -38,7 +41,6 @@ export async function GET(req: Request) {
       },
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Error building Zillow feed";
-    return new Response(msg, { status: 500 });
+    return jsonApiError(e);
   }
 }

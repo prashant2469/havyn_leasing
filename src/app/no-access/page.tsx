@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { signOutAction } from "@/server/actions/auth-session";
+import { signOutAction } from "@/server/actions/auth";
 import { tryOrgContext } from "@/server/auth/context";
 
 export default async function NoAccessPage() {

@@ -13,12 +13,14 @@ type ListingInput = {
   monthlyRent: number;
   bedrooms: number | null;
   availableFrom: Date | null;
+  createdAt?: Date;
   title: string;
   propertyName: string;
   neighborhood: string | null;
   listingAmenities: string[];
   propertyAmenities: string[];
   petRules: Record<string, unknown>;
+  tourAvailabilityScore?: number;
 };
 
 function clamp01(v: number): number {
@@ -81,6 +83,15 @@ function amenitiesScore(preferences: string[] | undefined, listing: ListingInput
   return clamp01(matches / target.size);
 }
 
+function portfolioFreshnessScore(createdAt?: Date): number {
+  if (!createdAt) return 0.5;
+  const ageDays = Math.max(0, Math.round((Date.now() - createdAt.getTime()) / 86_400_000));
+  if (ageDays <= 7) return 1;
+  if (ageDays <= 30) return 0.75;
+  if (ageDays <= 60) return 0.5;
+  return 0.2;
+}
+
 export function scoreListing(qual: QualInput, listing: ListingInput): {
   total: number;
   factors: Record<RecommendationFactor, number>;
@@ -92,6 +103,8 @@ export function scoreListing(qual: QualInput, listing: ListingInput): {
     moveIn: moveInScore(qual.moveInDate, listing.availableFrom),
     location: locationScore(qual.propertyInterest, listing),
     amenities: amenitiesScore(qual.amenityPreferences, listing),
+    tourAvailability: listing.tourAvailabilityScore ?? 0.5,
+    portfolioFreshness: portfolioFreshnessScore(listing.createdAt),
   };
 
   const total =
@@ -100,7 +113,9 @@ export function scoreListing(qual: QualInput, listing: ListingInput): {
     factors.pets * RECOMMENDATION_WEIGHTS.pets +
     factors.moveIn * RECOMMENDATION_WEIGHTS.moveIn +
     factors.location * RECOMMENDATION_WEIGHTS.location +
-    factors.amenities * RECOMMENDATION_WEIGHTS.amenities;
+    factors.amenities * RECOMMENDATION_WEIGHTS.amenities +
+    factors.tourAvailability * RECOMMENDATION_WEIGHTS.tourAvailability +
+    factors.portfolioFreshness * RECOMMENDATION_WEIGHTS.portfolioFreshness;
 
   return { total: clamp01(total), factors };
 }

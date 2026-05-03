@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { jsonApiError } from "@/lib/api-route-response";
 import { requireOrgContext } from "@/server/auth/context";
 import { buildGoogleOAuthUrl } from "@/server/services/google/google-calendar.service";
 
@@ -14,10 +15,13 @@ export async function GET(request: Request) {
     const authUrl = buildGoogleOAuthUrl(redirectUri, state);
     return NextResponse.redirect(authUrl);
   } catch (error) {
-    const message =
-      error instanceof Error && error.message.includes("Missing env var")
-        ? "missing_env"
-        : "connect_failed";
-    return NextResponse.redirect(new URL(`/settings?googleCalendar=${message}`, request.url));
+    if (error instanceof Error && error.message.includes("Missing env var")) {
+      return NextResponse.redirect(new URL("/settings?googleCalendar=missing_env", request.url));
+    }
+    if (error instanceof Error) {
+      console.warn("[google-calendar-connect]", error.message);
+      return NextResponse.redirect(new URL("/settings?googleCalendar=connect_failed", request.url));
+    }
+    return jsonApiError(error);
   }
 }

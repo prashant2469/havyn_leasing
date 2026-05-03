@@ -1,6 +1,6 @@
 "use client";
 
-import { signOutAction } from "@/server/actions/auth-session";
+import { signOutAction } from "@/server/actions/auth";
 
 import { cn } from "@/lib/utils";
 

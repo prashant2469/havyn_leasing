@@ -94,6 +94,13 @@ type LeadBrief = {
     needsImmediateResponse: boolean;
   } | null;
   strengthSignal?: {
+    strategyBucket:
+      | "TOUR_READY"
+      | "PROMISING_INCOMPLETE"
+      | "PORTFOLIO_CANDIDATE"
+      | "NURTURE"
+      | "WEAK_HOLD"
+      | "HUMAN_REQUIRED";
     strengthTier: "STRONG" | "PROMISING" | "UNCERTAIN" | "WEAK" | "DISQUALIFIED";
     overallScore: number;
   } | null;
@@ -102,13 +109,19 @@ type LeadBrief = {
   _count?: { recommendations: number };
 };
 
-type WorkQueueFilter = "all" | "needs_attention" | "draft_review";
+type WorkQueueFilter = "all" | "needs_attention" | "draft_review" | "tour_ready";
 
 const NO_FIRST_REPLY_STALE_MS = 2 * 60 * 60 * 1000;
 
 function leadMatchesWorkQueue(l: LeadBrief, f: WorkQueueFilter): boolean {
   if (f === "all") return true;
   if (f === "draft_review") return (l.replyDrafts?.length ?? 0) > 0;
+  if (f === "tour_ready") {
+    return (
+      l.strengthSignal?.strategyBucket === "TOUR_READY" &&
+      !l.tours.some((t) => t.status === "SCHEDULED")
+    );
+  }
   return leadNeedsAttention(l);
 }
 
@@ -263,6 +276,8 @@ type LeadDetail = {
     id: string;
     leadId: string;
     score: number;
+    tourReady: boolean;
+    recommendationIntent: "ALTERNATIVE" | "UPGRADE" | "DOWNGRADE" | "NEARBY";
     status: string;
     factors: unknown;
     listing: {
@@ -349,6 +364,36 @@ function strengthDotClass(
   return "bg-slate-300";
 }
 
+function strategyBucketBadge(
+  bucket:
+    | "TOUR_READY"
+    | "PROMISING_INCOMPLETE"
+    | "PORTFOLIO_CANDIDATE"
+    | "NURTURE"
+    | "WEAK_HOLD"
+    | "HUMAN_REQUIRED"
+    | null
+    | undefined,
+): { label: string; className: string } | null {
+  if (!bucket) return null;
+  if (bucket === "TOUR_READY") {
+    return { label: "Tour ready", className: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300" };
+  }
+  if (bucket === "PROMISING_INCOMPLETE") {
+    return { label: "Promising", className: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" };
+  }
+  if (bucket === "PORTFOLIO_CANDIDATE") {
+    return { label: "Portfolio", className: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300" };
+  }
+  if (bucket === "NURTURE") {
+    return { label: "Nurture", className: "bg-slate-100 text-slate-700 dark:bg-slate-900/30 dark:text-slate-300" };
+  }
+  if (bucket === "WEAK_HOLD") {
+    return { label: "Weak hold", className: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300" };
+  }
+  return { label: "Human review", className: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300" };
+}
+
 export function LeasingInboxClient() {
   const qc = useQueryClient();
   const searchParams = useSearchParams();
@@ -356,6 +401,7 @@ export function LeasingInboxClient() {
   const [workQueueFilter, setWorkQueueFilter] = useState<WorkQueueFilter>("needs_attention");
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [visibleByStage, setVisibleByStage] = useState<Partial<Record<InboxNavId, number>>>({});
 
   useEffect(() => {
     const leadId = searchParams.get("leadId");
@@ -363,6 +409,10 @@ export function LeasingInboxClient() {
     setSelectedLeadId(leadId);
     setSheetOpen(true);
   }, [searchParams]);
+
+  useEffect(() => {
+    setVisibleByStage({});
+  }, [channelFilter, workQueueFilter]);
 
   const leadsQuery = useQuery({
     queryKey: ["leads", "inbox-board", channelFilter],
@@ -372,9 +422,14 @@ export function LeasingInboxClient() {
         new Set(inboxBoardOrder.flatMap((id) => stagesForInboxNavId(id))),
       );
       url.searchParams.set("stages", allStages.join(","));
+      url.searchParams.set("limit", "200");
       if (channelFilter !== "ALL") url.searchParams.set("channel", channelFilter);
       const res = await fetch(url.toString());
-      const json = await res.json();
+      const contentType = res.headers.get("content-type") ?? "";
+      const json = contentType.includes("application/json") ? await res.json() : null;
+      if (!json) {
+        throw new Error(`Inbox API returned unexpected response (${res.status}).`);
+      }
       if (!res.ok) throw new Error(json.error ?? "Failed to load inbox");
       return json as { leads: LeadBrief[] };
     },
@@ -417,13 +472,107 @@ export function LeasingInboxClient() {
     enabled: Boolean(selectedLeadId),
     queryFn: async () => {
       const res = await fetch(`/api/leads/${selectedLeadId}`);
-      const json = await res.json();
+      const contentType = res.headers.get("content-type") ?? "";
+      const json = contentType.includes("application/json") ? await res.json() : null;
+      if (!json) {
+        throw new Error(`Lead detail API returned unexpected response (${res.status}).`);
+      }
       if (!res.ok) throw new Error(json.error ?? "Failed to load lead");
       return json as LeadDetail;
     },
   });
 
   const detail = detailQueryActive.data;
+
+  const renderLeadCard = (lead: LeadBrief) => {
+    const priority = lead.prioritySignal;
+    const badges = workQueueBadges(lead);
+    const hasEscalation = (lead.escalationFlags?.length ?? 0) > 0;
+    const isActive = selectedLeadId === lead.id && sheetOpen;
+    const cardStage = stageForLead(lead);
+    const strategyBadge = strategyBucketBadge(lead.strengthSignal?.strategyBucket);
+
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setSelectedLeadId(lead.id);
+          setSheetOpen(true);
+        }}
+        className={cn(
+          "hover:bg-muted/40 w-full rounded-md border border-border bg-background p-2 text-left transition-colors",
+          "border-l-4",
+          cardAccentClass(cardStage),
+          isActive && "ring-1 ring-primary/50",
+        )}
+      >
+        <div className="flex items-start justify-between gap-1">
+          <div className="flex min-w-0 items-center gap-1">
+            <span
+              className={cn(
+                "h-2 w-2 shrink-0 rounded-full",
+                strengthDotClass(lead.strengthSignal?.strengthTier),
+              )}
+              title={lead.strengthSignal?.strengthTier ?? "Strength pending"}
+            />
+            <p className="truncate text-sm font-semibold">
+              {lead.firstName} {lead.lastName}
+            </p>
+          </div>
+          {hasEscalation ? (
+            <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" title="Escalation open" />
+          ) : null}
+        </div>
+        <p className="truncate text-xs text-muted-foreground">
+          {lead.listing?.title ?? (lead.primaryUnit ? `Unit ${lead.primaryUnit.unitNumber}` : "—")}
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-1">
+          {badges.map((b) => (
+            <span key={b.key} className={cn("rounded px-1 py-0 text-[9px] font-medium", b.className)}>
+              {b.label}
+            </span>
+          ))}
+          {(lead._count?.recommendations ?? 0) > 0 ? (
+            <span className="rounded bg-blue-100 px-1 py-0 text-[9px] font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+              {lead._count?.recommendations} recs
+            </span>
+          ) : null}
+          <ChannelBadge channelType={lead.sourceChannelType} />
+          {strategyBadge ? (
+            <span className={cn("rounded px-1 py-0 text-[9px] font-medium", strategyBadge.className)}>
+              {strategyBadge.label}
+            </span>
+          ) : null}
+          <span className="rounded bg-slate-100 px-1 py-0 text-[9px] font-medium text-slate-700 dark:bg-slate-900/30 dark:text-slate-200">
+            {lead.automationPaused
+              ? "Paused"
+              : lead.automationMode === "MANUAL"
+                ? "Manual"
+                : lead.automationMode === "DRAFT_REVIEW"
+                  ? "Draft"
+                  : "Auto"}
+          </span>
+          {(lead.replyDrafts?.length ?? 0) > 0 ? (
+            <span className="rounded bg-indigo-100 px-1 py-0 text-[9px] font-medium text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+              Review draft
+            </span>
+          ) : null}
+        </div>
+        {priority && priority.priorityTier !== "NORMAL" ? (
+          <div className="mt-2">
+            <PriorityIndicator
+              tier={priority.priorityTier as "URGENT" | "HIGH" | "NORMAL" | "LOW" | "COLD"}
+              isAtRisk={priority.isAtRisk}
+              needsImmediateResponse={priority.needsImmediateResponse}
+            />
+          </div>
+        ) : null}
+        <p className="mt-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+          Updated {timeAgo(lead.updatedAt)}
+        </p>
+      </button>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -452,6 +601,14 @@ export function LeasingInboxClient() {
           onClick={() => setWorkQueueFilter("draft_review")}
         >
           Draft review ({draftReviewCount})
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={workQueueFilter === "tour_ready" ? "default" : "outline"}
+          onClick={() => setWorkQueueFilter("tour_ready")}
+        >
+          Tour ready
         </Button>
         <div className="ml-auto w-full sm:w-52">
           <select
@@ -484,6 +641,8 @@ export function LeasingInboxClient() {
           <div className="grid min-w-[1180px] grid-cols-6 gap-3">
             {inboxBoardOrder.map((stage) => {
               const stageLeads = leadsByStage[stage] ?? [];
+              const visibleCount = visibleByStage[stage] ?? 60;
+              const visibleLeads = stageLeads.slice(0, visibleCount);
               return (
                 <section key={stage} className="border-border bg-card min-h-[620px] rounded-lg border">
                   <header
@@ -502,104 +661,31 @@ export function LeasingInboxClient() {
                       {stageLeads.length === 0 ? (
                         <p className="px-2 py-3 text-xs text-muted-foreground">No leads in this stage.</p>
                       ) : (
-                        stageLeads.map((lead) => {
-                          const priority = lead.prioritySignal;
-                          const badges = workQueueBadges(lead);
-                          const hasEscalation = (lead.escalationFlags?.length ?? 0) > 0;
-                          const isActive = selectedLeadId === lead.id && sheetOpen;
-                          const cardStage = stageForLead(lead);
-
-                          return (
-                            <button
-                              key={lead.id}
-                              type="button"
-                              onClick={() => {
-                                setSelectedLeadId(lead.id);
-                                setSheetOpen(true);
-                              }}
-                              className={cn(
-                                "hover:bg-muted/40 w-full rounded-md border border-border bg-background p-2 text-left transition-colors",
-                                "border-l-4",
-                                cardAccentClass(cardStage),
-                                isActive && "ring-1 ring-primary/50",
-                              )}
-                            >
-                              <div className="flex items-start justify-between gap-1">
-                                <div className="flex min-w-0 items-center gap-1">
-                                  <span
-                                    className={cn(
-                                      "h-2 w-2 shrink-0 rounded-full",
-                                      strengthDotClass(lead.strengthSignal?.strengthTier),
-                                    )}
-                                    title={lead.strengthSignal?.strengthTier ?? "Strength pending"}
-                                  />
-                                  <p className="truncate text-sm font-semibold">
-                                    {lead.firstName} {lead.lastName}
-                                  </p>
-                                </div>
-                                {hasEscalation ? (
-                                  <span
-                                    className="h-2 w-2 shrink-0 rounded-full bg-red-500"
-                                    title="Escalation open"
-                                  />
-                                ) : null}
-                              </div>
-                              <p className="truncate text-xs text-muted-foreground">
-                                {lead.listing?.title ??
-                                  (lead.primaryUnit ? `Unit ${lead.primaryUnit.unitNumber}` : "—")}
-                              </p>
-                              <div className="mt-2 flex flex-wrap items-center gap-1">
-                                {badges.map((b) => (
-                                  <span
-                                    key={b.key}
-                                    className={cn("rounded px-1 py-0 text-[9px] font-medium", b.className)}
-                                  >
-                                    {b.label}
-                                  </span>
-                                ))}
-                                {(lead._count?.recommendations ?? 0) > 0 ? (
-                                  <span className="rounded bg-blue-100 px-1 py-0 text-[9px] font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-                                    {lead._count?.recommendations} recs
-                                  </span>
-                                ) : null}
-                                <ChannelBadge channelType={lead.sourceChannelType} />
-                                <span className="rounded bg-slate-100 px-1 py-0 text-[9px] font-medium text-slate-700 dark:bg-slate-900/30 dark:text-slate-200">
-                                  {lead.automationPaused
-                                    ? "Paused"
-                                    : lead.automationMode === "MANUAL"
-                                      ? "Manual"
-                                      : lead.automationMode === "DRAFT_REVIEW"
-                                        ? "Draft"
-                                        : "Auto"}
-                                </span>
-                                {(lead.replyDrafts?.length ?? 0) > 0 ? (
-                                  <span className="rounded bg-indigo-100 px-1 py-0 text-[9px] font-medium text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
-                                    Review draft
-                                  </span>
-                                ) : null}
-                              </div>
-                              {priority && priority.priorityTier !== "NORMAL" ? (
-                                <div className="mt-2">
-                                  <PriorityIndicator
-                                    tier={
-                                      priority.priorityTier as
-                                        | "URGENT"
-                                        | "HIGH"
-                                        | "NORMAL"
-                                        | "LOW"
-                                        | "COLD"
-                                    }
-                                    isAtRisk={priority.isAtRisk}
-                                    needsImmediateResponse={priority.needsImmediateResponse}
-                                  />
-                                </div>
-                              ) : null}
-                              <p className="mt-2 text-[10px] uppercase tracking-wide text-muted-foreground">
-                                Updated {timeAgo(lead.updatedAt)}
-                              </p>
-                            </button>
-                          );
-                        })
+                        <>
+                          {visibleLeads.map((lead) => (
+                            <div key={lead.id} className="px-1 py-1">
+                              {renderLeadCard(lead)}
+                            </div>
+                          ))}
+                          {visibleCount < stageLeads.length ? (
+                            <div className="px-1 pt-1">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="w-full"
+                                onClick={() =>
+                                  setVisibleByStage((prev) => ({
+                                    ...prev,
+                                    [stage]: (prev[stage] ?? 60) + 60,
+                                  }))
+                                }
+                              >
+                                Load more ({stageLeads.length - visibleCount} remaining)
+                              </Button>
+                            </div>
+                          ) : null}
+                        </>
                       )}
                     </div>
                   </ScrollArea>
@@ -763,6 +849,52 @@ export function LeasingInboxClient() {
                       recommendations={detail.recommendations}
                     />
 
+                    <details className="rounded-md border border-border/60 bg-background p-2" open>
+                      <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Strategy
+                      </summary>
+                      <div className="mt-2 space-y-2 text-xs">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {strategyBucketBadge(detail.lead.strengthSignal?.strategyBucket) ? (
+                            <span
+                              className={cn(
+                                "rounded px-2 py-0.5 text-[10px] font-medium",
+                                strategyBucketBadge(detail.lead.strengthSignal?.strategyBucket)!.className,
+                              )}
+                            >
+                              {strategyBucketBadge(detail.lead.strengthSignal?.strategyBucket)!.label}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">Bucket pending</span>
+                          )}
+                          {detail.recommendations.some((r) => r.tourReady) ? (
+                            <Badge variant="outline">Tour-ready recommendation available</Badge>
+                          ) : null}
+                        </div>
+                        <p className="text-muted-foreground">
+                          Overall strength:{" "}
+                          {detail.lead.strengthSignal
+                            ? `${Math.round(detail.lead.strengthSignal.overallScore * 100)}%`
+                            : "pending"}
+                        </p>
+                        {detail.lead.strengthSignal?.strategyBucket === "PROMISING_INCOMPLETE" ? (
+                          <p className="text-muted-foreground">
+                            Next action: capture missing qualification data before proposing tours.
+                          </p>
+                        ) : null}
+                        {detail.lead.strengthSignal?.strategyBucket === "PORTFOLIO_CANDIDATE" ? (
+                          <p className="text-muted-foreground">
+                            Next action: share top portfolio alternatives and confirm preferred option.
+                          </p>
+                        ) : null}
+                        {detail.lead.strengthSignal?.strategyBucket === "TOUR_READY" ? (
+                          <p className="text-muted-foreground">
+                            Next action: offer concrete tour windows now.
+                          </p>
+                        ) : null}
+                      </div>
+                    </details>
+
                     {detail.conversation ? (
                       <ConversationSummaryCard
                         summary={detail.copilotContext?.summary ?? null}
@@ -797,6 +929,13 @@ export function LeasingInboxClient() {
                               key={rec.id}
                               recommendation={{
                                 ...rec,
+                                tourReady: Boolean(rec.tourReady),
+                                recommendationIntent:
+                                  (rec.recommendationIntent as
+                                    | "ALTERNATIVE"
+                                    | "UPGRADE"
+                                    | "DOWNGRADE"
+                                    | "NEARBY") ?? "ALTERNATIVE",
                                 status: rec.status as
                                   | "SUGGESTED"
                                   | "SHARED_WITH_PROSPECT"

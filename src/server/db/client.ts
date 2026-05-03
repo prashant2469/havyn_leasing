@@ -1,5 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 
+import "@/env";
+
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient | undefined };
 
 function createPrismaClient() {
@@ -35,9 +37,7 @@ function getPrisma(): PrismaClient {
 
   if (!client) {
     client = createPrismaClient();
-    if (process.env.NODE_ENV !== "production") {
-      globalForPrisma.prisma = client;
-    }
+    globalForPrisma.prisma = client;
   }
 
   if (clientMissingModels(client)) {

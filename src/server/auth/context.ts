@@ -19,6 +19,10 @@ export class DevAuthError extends Error {
   }
 }
 
+function isDevAuthBypassEnabled(): boolean {
+  return process.env.NODE_ENV === "development" && process.env.DEV_AUTH_BYPASS?.trim() === "true";
+}
+
 type ResolvedSessionIdentity = {
   userId: string | null;
   email: string | null;
@@ -36,16 +40,39 @@ async function ensureUserMembershipByEmail(email: string): Promise<string | null
     select: { id: true },
   });
 
+  let ownerlessOrg = await prisma.organization.findFirst({
+    where: { memberships: { none: {} } },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+  if (!ownerlessOrg) {
+    const organizationCount = await prisma.organization.count();
+    if (organizationCount === 0) {
+      ownerlessOrg = await prisma.organization.create({
+        data: { name: "Havyn", slug: "havyn" },
+        select: { id: true },
+      });
+    }
+  }
+
   if (user) {
     const membershipCount = await prisma.membership.count({
       where: { userId: user.id },
     });
     if (membershipCount > 0) return user.id;
-    return null;
+    if (!ownerlessOrg) return null;
+
+    await prisma.membership.create({
+      data: {
+        userId: user.id,
+        organizationId: ownerlessOrg.id,
+        role: MembershipRole.OWNER,
+      },
+    });
+    return user.id;
   }
 
-  const organizationCount = await prisma.organization.count();
-  if (organizationCount > 0) {
+  if (!ownerlessOrg) {
     return null;
   }
 
@@ -57,20 +84,10 @@ async function ensureUserMembershipByEmail(email: string): Promise<string | null
     select: { id: true },
   });
 
-  const org =
-    (await prisma.organization.findFirst({
-      orderBy: { createdAt: "asc" },
-      select: { id: true },
-    })) ??
-    (await prisma.organization.create({
-      data: { name: "Havyn", slug: "havyn" },
-      select: { id: true },
-    }));
-
   await prisma.membership.create({
     data: {
       userId: createdUser.id,
-      organizationId: org.id,
+      organizationId: ownerlessOrg.id,
       role: MembershipRole.OWNER,
     },
   });
@@ -119,10 +136,11 @@ async function resolveMembershipsFromAuth() {
 
 /**
  * Resolves the signed-in user and active organization (cookie + membership).
- * In development, `DEV_ORGANIZATION_ID` + `DEV_USER_ID` bypass session when both are set and valid.
+ * In development, `DEV_AUTH_BYPASS=true` plus `DEV_ORGANIZATION_ID` + `DEV_USER_ID`
+ * can bypass session when all are set and valid.
  */
 export async function requireOrgContext(): Promise<OrgContext> {
-  if (process.env.NODE_ENV === "development") {
+  if (isDevAuthBypassEnabled()) {
     const devOrg = process.env.DEV_ORGANIZATION_ID?.trim();
     const devUser = process.env.DEV_USER_ID?.trim();
     if (devOrg && devUser) {
@@ -166,7 +184,7 @@ export async function tryOrgContext(): Promise<OrgContext | null> {
 
 /** Session user id if signed in (no org resolution). */
 export async function getSessionUserId(): Promise<string | null> {
-  if (process.env.NODE_ENV === "development") {
+  if (isDevAuthBypassEnabled()) {
     const devUser = process.env.DEV_USER_ID?.trim();
     const devOrg = process.env.DEV_ORGANIZATION_ID?.trim();
     if (devOrg && devUser) {

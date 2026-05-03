@@ -37,6 +37,7 @@ const llmQualificationExtractionSchema = z.object({
 function aiEnabled(): boolean {
   return process.env.ENABLE_AI_SUGGESTIONS === "true" && Boolean(process.env.OPENAI_API_KEY?.trim());
 }
+const OPENAI_TIMEOUT_MS = 15_000;
 
 export type LlmSummaryResult = z.infer<typeof llmSummarySchema>;
 
@@ -57,6 +58,7 @@ export async function tryLlmConversationSummary(input: {
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
+      signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         "Content-Type": "application/json",
@@ -114,6 +116,7 @@ export async function tryLlmReplyDraft(input: {
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
+      signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         "Content-Type": "application/json",
@@ -163,6 +166,7 @@ export async function tryLlmQualificationExtraction(input: {
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
+      signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         "Content-Type": "application/json",

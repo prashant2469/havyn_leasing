@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { NextResponse } from "next/server";
 
+import { jsonApiError } from "@/lib/api-route-response";
 import { requireOrgContext } from "@/server/auth/context";
 import { prisma } from "@/server/db/client";
 import { generatePresignedUploadUrl } from "@/lib/s3";
@@ -48,7 +49,6 @@ export async function POST(request: Request) {
     const signed = await generatePresignedUploadUrl(storageKey, contentType);
     return NextResponse.json(signed);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to create upload URL";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return jsonApiError(error);
   }
 }

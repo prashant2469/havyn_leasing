@@ -4,14 +4,15 @@ Operational leasing platform built with Next.js App Router, Prisma, and Supabase
 
 ## Local Development
 
-1. Copy `.env.example` to `.env.local`.
-2. Start local database and seed demo data:
+Run one bootstrap command from a fresh clone:
 
 ```bash
-npm run db:setup
+npm run setup
 ```
 
-3. Start the app:
+That command links the repo to Vercel, pulls development environment variables into `.env.local`, installs dependencies, and applies migrations.
+
+Then start the app:
 
 ```bash
 npm run dev
@@ -22,21 +23,18 @@ npm run dev
 - Login supports:
   - Invited email/password accounts through Supabase
   - Google OAuth through Supabase
-- Required env:
-  - `SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_URL`
-  - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-  - `SUPABASE_SERVICE_ROLE_KEY` (for team invites and password setup emails)
+- Required runtime values are managed through Vercel project environment variables.
 
-## Vercel / production
+## Vercel / Production
 
-Prisma requires Postgres connection strings (Supabase URL alone is not enough):
+This repo is designed to use Vercel as the env source of truth:
 
-- `DATABASE_URL` — pooled connection string from Supabase (**Project Settings → Database**)
-- `DIRECT_URL` — direct connection string (same screen; used for migrations / some Prisma flows)
+- Supabase / Postgres variables are provisioned through Marketplace integration.
+- Upstash KV variables are provisioned through Marketplace integration.
+- App-specific keys (Twilio, Resend, OpenAI, Google OAuth) are set once in Vercel env settings.
 
-Optional but required if anyone has connected Google Calendar in that database:
+For local refreshes after env changes:
 
-- `GOOGLE_CALENDAR_CLIENT_ID`
-- `GOOGLE_CALENDAR_CLIENT_SECRET`
-
-Also set `NEXT_PUBLIC_APP_URL` to your production site URL (e.g. `https://havyn-leasing.vercel.app`).
+```bash
+npx vercel env pull .env.local --environment=development --yes
+```
