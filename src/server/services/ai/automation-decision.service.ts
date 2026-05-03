@@ -96,14 +96,17 @@ export async function evaluateAutomationDecision(
   }
 
   const minAutoReplyConfidence = conversation.channelType === "SMS" ? 0.5 : 0.7;
-  if (input.confidence >= minAutoReplyConfidence && !quietHours) {
+  const allowAutoReplyDuringQuietHours = conversation.channelType === "SMS";
+  if (input.confidence >= minAutoReplyConfidence && (!quietHours || allowAutoReplyDuringQuietHours)) {
+    const confidenceReason =
+      conversation.channelType === "SMS" ? "sms_medium_confidence_autoreply" : "high_confidence_safe_intent";
+    const quietHoursReason = quietHours && allowAutoReplyDuringQuietHours ? ["quiet_hours_sms_override"] : [];
     return {
       decision: "AUTO_REPLY",
       reasons: [
-        conversation.channelType === "SMS"
-          ? "sms_medium_confidence_autoreply"
-          : "high_confidence_safe_intent",
+        confidenceReason,
         `strength_tier=${tier}`,
+        ...quietHoursReason,
       ],
     };
   }
