@@ -83,10 +83,6 @@ function toText(value: unknown): string {
   return "";
 }
 
-function singleLine(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
 export async function generateStrategyMessage(
   ctx: OrgContext,
   input: { leadId: string; decision: StrategyDecision; smsCompact?: boolean },
@@ -143,20 +139,35 @@ export async function generateStrategyMessage(
   const recommendations = await listRecommendationsForLead(ctx, lead.id);
   const recSnippet = input.smsCompact ? "" : recommendationsSnippet({ recommendations });
 
-  if (input.decision.action === "QUALIFY") {
-    const q1 = await getNextQualificationPrompt(lead.id);
-    const q2Key = !input.smsCompact
-      ? (input.decision.qualificationKeysToAsk?.[1] as QualificationKey | undefined)
-      : undefined;
-    const q2 = q2Key ? QUALIFICATION_QUESTIONS[q2Key] : "";
-    const fallbackQ1 = "What move-in date are you targeting?";
-    if (input.smsCompact) {
+  // SMS-first outreach: short, warm, tour-focused — no financial details, no recs
+  if (input.smsCompact) {
+    const hasApplication = lead.applications.length > 0;
+    if (hasApplication && listingTitle) {
       return {
-        body: `Hi ${firstName},\n\n${personalizedIntro}\n\nQuick question so I can send the right tour options: ${singleLine(q1 ?? fallbackQ1)}`,
+        body: `Hi ${firstName}, thanks for applying for ${listingTitle}! I'd love to get you in for a tour this week. Do mornings or afternoons work better?`,
         subject: defaultSubject,
         preferredChannel: "AUTO",
       };
     }
+    if (hasApplication) {
+      return {
+        body: `Hi ${firstName}, thanks for your application! I'd love to set up a tour for you this week. Do mornings or afternoons work better?`,
+        subject: defaultSubject,
+        preferredChannel: "AUTO",
+      };
+    }
+    return {
+      body: `Hi ${firstName}, thanks for your interest${listingTitle ? ` in ${listingTitle}` : ""}! I can send a few tour times this week. When works best for you?`,
+      subject: defaultSubject,
+      preferredChannel: "AUTO",
+    };
+  }
+
+  if (input.decision.action === "QUALIFY") {
+    const q1 = await getNextQualificationPrompt(lead.id);
+    const q2Key = input.decision.qualificationKeysToAsk?.[1] as QualificationKey | undefined;
+    const q2 = q2Key ? QUALIFICATION_QUESTIONS[q2Key] : "";
+    const fallbackQ1 = "What move-in date are you targeting?";
     return {
       body: appendSection(
         `Hi ${firstName},\n\n${personalizedIntro}\n\nTo keep options accurate and avoid wasted tours, I need two quick details.\n${q1 ?? fallbackQ1}${q2 ? `\n${q2}` : ""}`.trim(),

@@ -25,10 +25,10 @@ export function isPublicHttpsWebhookBase(base: string): boolean {
  */
 export function resolveWebhookAppOrigin(): string | null {
   const candidates: string[] = [];
-  const vercel = process.env.VERCEL_URL?.trim();
-  if (vercel) candidates.push(`https://${vercel}`);
   const next = process.env.NEXT_PUBLIC_APP_URL?.trim();
   if (next) candidates.push(next.replace(/\/+$/, ""));
+  const vercel = process.env.VERCEL_URL?.trim();
+  if (vercel) candidates.push(`https://${vercel}`);
 
   for (const raw of candidates) {
     if (isPublicHttpsWebhookBase(raw)) return new URL(raw).origin;
