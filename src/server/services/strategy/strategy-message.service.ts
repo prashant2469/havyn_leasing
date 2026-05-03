@@ -83,9 +83,13 @@ function toText(value: unknown): string {
   return "";
 }
 
+function singleLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
 export async function generateStrategyMessage(
   ctx: OrgContext,
-  input: { leadId: string; decision: StrategyDecision },
+  input: { leadId: string; decision: StrategyDecision; smsCompact?: boolean },
 ): Promise<StrategyMessage> {
   const lead = await prisma.lead.findFirst({
     where: { id: input.leadId, organizationId: ctx.organizationId },
@@ -108,7 +112,8 @@ export async function generateStrategyMessage(
   const qualMap = new Map(lead.qualifications.map((q) => [q.key, q.value]));
   const moveInDate = toText(qualMap.get("moveInDate")) || toText(latestPayload.desiredLeaseStart);
   const incomeRange = toText(qualMap.get("incomeRange"));
-  const monthlyBudget = toNumber(qualMap.get("monthlyBudget")) ?? toNumber(latestPayload.monthlyIncome);
+  const monthlyBudget = toNumber(qualMap.get("monthlyBudget"));
+  const monthlyIncome = toNumber(qualMap.get("monthlyIncome")) ?? toNumber(latestPayload.monthlyIncome);
   const creditSelfReport = toText(qualMap.get("creditSelfReport")) || toText(latestPayload.creditScoreRange);
   const summaryBits: string[] = [];
   if (moveInDate) summaryBits.push(`move-in around ${moveInDate}`);
@@ -122,21 +127,39 @@ export async function generateStrategyMessage(
     );
   } else if (incomeRange) {
     summaryBits.push(`income range ${incomeRange}`);
+  } else if (monthlyIncome != null) {
+    summaryBits.push(
+      `income around ${new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        maximumFractionDigits: 0,
+      }).format(monthlyIncome)}/mo`,
+    );
   }
   if (creditSelfReport) summaryBits.push(`credit profile ${creditSelfReport}`);
   const personalizedIntro = summaryBits.length
     ? `Thanks for applying${listingTitle ? ` for ${listingTitle}` : ""}. I noted ${summaryBits.join(", ")}.`
     : `Thanks for applying${listingTitle ? ` for ${listingTitle}` : ""}.`;
   const recommendations = await listRecommendationsForLead(ctx, lead.id);
-  const recSnippet = recommendationsSnippet({ recommendations });
+  const recSnippet = input.smsCompact ? "" : recommendationsSnippet({ recommendations });
 
   if (input.decision.action === "QUALIFY") {
     const q1 = await getNextQualificationPrompt(lead.id);
-    const q2Key = input.decision.qualificationKeysToAsk?.[1] as QualificationKey | undefined;
+    const q2Key = !input.smsCompact
+      ? (input.decision.qualificationKeysToAsk?.[1] as QualificationKey | undefined)
+      : undefined;
     const q2 = q2Key ? QUALIFICATION_QUESTIONS[q2Key] : "";
+    const fallbackQ1 = "What move-in date are you targeting?";
+    if (input.smsCompact) {
+      return {
+        body: `Hi ${firstName},\n\n${personalizedIntro}\n\nQuick question so I can send the right tour options: ${singleLine(q1 ?? fallbackQ1)}`,
+        subject: defaultSubject,
+        preferredChannel: "AUTO",
+      };
+    }
     return {
       body: appendSection(
-        `Hi ${firstName},\n\n${personalizedIntro}\n\nTo keep options accurate and avoid wasted tours, I need two quick details.\n${q1 ?? "What move-in date are you targeting?"}${q2 ? `\n${q2}` : ""}`.trim(),
+        `Hi ${firstName},\n\n${personalizedIntro}\n\nTo keep options accurate and avoid wasted tours, I need two quick details.\n${q1 ?? fallbackQ1}${q2 ? `\n${q2}` : ""}`.trim(),
         recSnippet,
       ),
       subject: defaultSubject,

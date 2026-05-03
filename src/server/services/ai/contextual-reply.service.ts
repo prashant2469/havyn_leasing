@@ -112,7 +112,7 @@ export async function generateContextualReply(
     heuristicBody,
     propertyFactsBlock: kb?.promptBlock,
   });
-  const llmBody = llm?.body ?? heuristicBody;
+  const llmBody = llm?.body || heuristicBody;
   const body = suggestedChannel === "SMS" ? compactSmsDraft(llmBody, 280) : llmBody;
   const confidence = llm
     ? Math.max(0.55, Math.min(0.95, classified.confidence + 0.12))

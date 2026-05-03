@@ -262,23 +262,6 @@ export async function submitPublicApplicationAction(
       );
       qualificationUpserts.push(
         prisma.qualificationAnswer.upsert({
-          where: { leadId_key: { leadId: ingest.leadId, key: "monthlyBudget" } },
-          create: {
-            leadId: ingest.leadId,
-            key: "monthlyBudget",
-            value: payload.monthlyIncome as Prisma.InputJsonValue,
-            source: "MANUAL",
-            metadata: { source: "public_application", derivedFrom: "monthlyIncome" },
-          },
-          update: {
-            value: payload.monthlyIncome as Prisma.InputJsonValue,
-            source: "MANUAL",
-            metadata: { source: "public_application", derivedFrom: "monthlyIncome" },
-          },
-        }),
-      );
-      qualificationUpserts.push(
-        prisma.qualificationAnswer.upsert({
           where: { leadId_key: { leadId: ingest.leadId, key: "incomeRange" } },
           create: {
             leadId: ingest.leadId,

@@ -12,6 +12,8 @@ const TOUR_INTEREST_PATTERN =
   /(tour|showing|see (the )?(home|apartment|unit)|visit|walkthrough|walk through|available times)/i;
 const TOUR_CONFIRM_PATTERN =
   /(works for me|i('| a)?ll take|book me|confirm|that time works|see you then|lets do|let's do|tuesday|wednesday|thursday|friday|saturday|sunday|monday).*(\d{1,2}(:\d{2})?\s?(am|pm)?)/i;
+const SCHEDULE_PREF_PATTERN =
+  /(morning|mornings|afternoon|afternoons|evening|evenings|weekday|weekdays|weekend|weekends|anytime|after work|before noon|early|late|flexible|works better)/i;
 const APPLICATION_Q_PATTERN =
   /(apply|application|documents|screening|credit check|background check|approval|requirements)/i;
 const QUAL_RESPONSE_PATTERN =
@@ -68,6 +70,15 @@ export function classifyInboundIntent(messageBody: string): IntentClassification
       intent: InboundIntentType.TOUR_CONFIRMATION,
       confidence: 0.82,
       reasons: ["time_confirmation_language"],
+      isSensitive: false,
+    };
+  }
+
+  if (SCHEDULE_PREF_PATTERN.test(lower)) {
+    return {
+      intent: InboundIntentType.TOUR_INTEREST,
+      confidence: 0.74,
+      reasons: ["schedule_preference_detected"],
       isSensitive: false,
     };
   }

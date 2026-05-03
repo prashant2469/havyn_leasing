@@ -109,29 +109,36 @@ export async function POST(request: Request) {
         ? `[Inbound MMS] Prospect sent ${mediaCount} media attachment${mediaCount > 1 ? "s" : ""}.`
         : "[Inbound SMS without body]");
 
-    await ingestInquiry(
-      { organizationId, actorUserId: null },
-      {
-        channelType: ListingChannelType.SMS,
-        listingId: existingLead?.listingId ?? null,
-        contact: {
-          firstName: existingLead?.firstName ?? name.firstName,
-          lastName: existingLead?.lastName ?? name.lastName,
-          email: existingLead?.email ?? null,
-          phone: from,
+    try {
+      await ingestInquiry(
+        { organizationId, actorUserId: null },
+        {
+          channelType: ListingChannelType.SMS,
+          listingId: existingLead?.listingId ?? null,
+          contact: {
+            firstName: existingLead?.firstName ?? name.firstName,
+            lastName: existingLead?.lastName ?? name.lastName,
+            email: existingLead?.email ?? null,
+            phone: from,
+          },
+          message: body,
+          externalLeadId: from,
+          externalThreadId: `sms:${from}:${to}`,
+          sourceMetadata: {
+            provider: "twilio",
+            messageSid: messageSid || null,
+            from,
+            to,
+            numMedia: mediaCount,
+          },
         },
-        message: body,
-        externalLeadId: from,
-        externalThreadId: `sms:${from}:${to}`,
-        sourceMetadata: {
-          provider: "twilio",
-          messageSid: messageSid || null,
-          from,
-          to,
-          numMedia: mediaCount,
-        },
-      },
-    );
+      );
+    } catch (ingestError) {
+      console.error("[twilio-sms] ingest failed", ingestError);
+      return twimlResponse(
+        "<Message>Thanks for your message. A leasing specialist will follow up shortly.</Message>",
+      );
+    }
 
     return twimlResponse();
   } catch (error) {
