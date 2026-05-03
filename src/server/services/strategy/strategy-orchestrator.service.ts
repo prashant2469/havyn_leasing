@@ -62,12 +62,12 @@ export async function resolveAndExecuteStrategy(
     if (!lead || lead.automationPaused) return;
     isSmsConversation = conversation?.channelType === ListingChannelType.SMS;
 
-    // If the lead only has phone (no email), SMS will be used regardless of conversation origin.
+    // AUTO delivery prefers SMS when a phone number exists.
     const leadContact = await prisma.lead.findFirst({
       where: { id: input.leadId, organizationId: ctx.organizationId },
       select: { email: true, phone: true },
     });
-    willDeliverViaSms = isSmsConversation || (!leadContact?.email?.trim() && !!leadContact?.phone?.trim());
+    willDeliverViaSms = isSmsConversation || !!leadContact?.phone?.trim();
 
     await computeLeadStrength(ctx, input.leadId);
     const strategy = await resolveStrategyDecision(ctx, {

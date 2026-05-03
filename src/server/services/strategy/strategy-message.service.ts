@@ -108,20 +108,11 @@ export async function generateStrategyMessage(
   const qualMap = new Map(lead.qualifications.map((q) => [q.key, q.value]));
   const moveInDate = toText(qualMap.get("moveInDate")) || toText(latestPayload.desiredLeaseStart);
   const incomeRange = toText(qualMap.get("incomeRange"));
-  const monthlyBudget = toNumber(qualMap.get("monthlyBudget"));
   const monthlyIncome = toNumber(qualMap.get("monthlyIncome")) ?? toNumber(latestPayload.monthlyIncome);
   const creditSelfReport = toText(qualMap.get("creditSelfReport")) || toText(latestPayload.creditScoreRange);
   const summaryBits: string[] = [];
   if (moveInDate) summaryBits.push(`move-in around ${moveInDate}`);
-  if (monthlyBudget != null) {
-    summaryBits.push(
-      `budget around ${new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency: "USD",
-        maximumFractionDigits: 0,
-      }).format(monthlyBudget)}/mo`,
-    );
-  } else if (incomeRange) {
+  if (incomeRange) {
     summaryBits.push(`income range ${incomeRange}`);
   } else if (monthlyIncome != null) {
     summaryBits.push(
@@ -170,7 +161,7 @@ export async function generateStrategyMessage(
     const fallbackQ1 = "What move-in date are you targeting?";
     return {
       body: appendSection(
-        `Hi ${firstName},\n\n${personalizedIntro}\n\nTo keep options accurate and avoid wasted tours, I need two quick details.\n${q1 ?? fallbackQ1}${q2 ? `\n${q2}` : ""}`.trim(),
+        `Hi ${firstName},\n\nThanks for your interest${listingTitle ? ` in ${listingTitle}` : ""}. To find the best fit quickly, I need two quick details.\n${q1 ?? fallbackQ1}${q2 ? `\n${q2}` : ""}`.trim(),
         recSnippet,
       ),
       subject: defaultSubject,

@@ -66,7 +66,15 @@ export async function enqueueLeadIngested(payload: LeadIngestedPayload) {
     try {
       console.info("[automation] after.start lead/ingested", payload);
       const ctx = await getAutomationOrgContext(payload.organizationId);
-      await runCopilotAnalysis(ctx, payload.leadId, payload.conversationId);
+      try {
+        await runCopilotAnalysis(ctx, payload.leadId, payload.conversationId);
+      } catch (copilotError) {
+        console.error("[automation] lead/ingested copilot failed (non-fatal)", {
+          leadId: payload.leadId,
+          conversationId: payload.conversationId,
+          error: copilotError,
+        });
+      }
       await dispatchFirstOutreach(ctx, payload.leadId, payload.conversationId);
       console.info("[automation] after.end lead/ingested", {
         leadId: payload.leadId,
@@ -92,7 +100,15 @@ export async function enqueueMessageReceived(payload: MessageReceivedPayload) {
     try {
       console.info("[automation] after.start message/received", payload);
       const ctx = await getAutomationOrgContext(payload.organizationId);
-      await runCopilotAnalysis(ctx, payload.leadId, payload.conversationId);
+      try {
+        await runCopilotAnalysis(ctx, payload.leadId, payload.conversationId);
+      } catch (copilotError) {
+        console.error("[automation] message/received copilot failed (non-fatal)", {
+          leadId: payload.leadId,
+          conversationId: payload.conversationId,
+          error: copilotError,
+        });
+      }
       await dispatchAutomationReply(ctx, payload.leadId, payload.conversationId);
       console.info("[automation] after.end message/received", {
         leadId: payload.leadId,
