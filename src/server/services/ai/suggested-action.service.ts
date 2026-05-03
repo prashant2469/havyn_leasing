@@ -11,10 +11,7 @@ import { ActivityVerbs } from "@/domains/activity/verbs";
 import type { OrgContext } from "@/server/auth/context";
 import { prisma } from "@/server/db/client";
 import { recordActivity } from "@/server/services/activity/activity.service";
-import { evaluateAutomationDecision } from "@/server/services/ai/automation-decision.service";
-import { computeLeadStrength } from "@/server/services/ai/lead-strength.service";
 import { qualificationGapLabelsForLead } from "@/server/services/ai/copilot-qual-gaps";
-import { classifyInboundIntent } from "@/server/services/ai/intent-classifier.service";
 import { recordHumanHandoff } from "@/server/services/leasing/handoff.service";
 import { getQualificationCompleteness } from "@/server/services/leasing/qualification-score.service";
 import { sendToProspect } from "@/server/services/outbound/dispatch.service";
@@ -243,53 +240,11 @@ export async function generateSuggestedActions(
     metadata: { count: created.length, types: suggestions.map((s) => s.actionType), conversationId },
   });
 
-  const safeAutoActions = new Set<AISuggestedActionType>([
-    AISuggestedActionType.REPLY_NOW,
-    AISuggestedActionType.ASK_QUALIFICATION,
-    AISuggestedActionType.OFFER_TOUR_TIMES,
-  ]);
-  if (conversationId) {
-    try {
-      await computeLeadStrength(ctx, leadId);
-      const latestInbound = await prisma.message.findFirst({
-        where: { conversationId, direction: "INBOUND" },
-        orderBy: { sentAt: "desc" },
-        select: { body: true },
-      });
-      const classified = classifyInboundIntent(latestInbound?.body ?? "");
-      const decision = await evaluateAutomationDecision(ctx, {
-        leadId,
-        conversationId,
-        intent: classified.intent,
-        confidence: classified.confidence,
-      });
-      if (decision.decision === "AUTO_REPLY") {
-        for (const action of created) {
-          if (!safeAutoActions.has(action.actionType)) continue;
-          await prisma.aISuggestedAction.update({
-            where: { id: action.id },
-            data: { status: "ACCEPTED", actionedByUserId: ctx.userId, actionedAt: new Date() },
-          });
-          await applySuggestedActionSideEffects(ctx, action);
-          await recordActivity({
-            ctx,
-            verb: ActivityVerbs.AI_ACTION_ACCEPTED,
-            entityType: "Lead",
-            entityId: action.leadId,
-            metadata: {
-              actionId: action.id,
-              actionType: action.actionType,
-              conversationId: action.conversationId,
-              autoExecuted: true,
-            },
-          });
-          break;
-        }
-      }
-    } catch {
-      // auto-execution is best effort; explicit suggested actions still remain usable
-    }
-  }
+  // Auto-execution of suggested actions is DISABLED.
+  // The strategy orchestrator (`dispatchFirstOutreach` / `dispatchAutomationReply`) is the
+  // single owner of outbound messaging. Letting copilot auto-execute here caused duplicate
+  // SMS sends — one from this path and another from the strategy pipeline that runs
+  // immediately after copilot analysis.
 
   return created;
 }
@@ -364,7 +319,7 @@ async function applySuggestedActionSideEffects(ctx: OrgContext, action: AISugges
         await sendToProspect(ctx, {
           leadId,
           conversationId,
-          body: `Hi ${lead.firstName},\n\nTo keep your options accurate, can you share your target move-in date and budget range?`,
+          body: `Hi ${lead.firstName},\n\nTo keep your options accurate, can you share your target move-in date and income range?`,
           subject: lead.listing?.title
             ? `Quick details for ${lead.listing.title} — Havyn Leasing`
             : "Quick leasing details — Havyn Leasing",

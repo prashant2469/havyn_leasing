@@ -44,6 +44,7 @@ export async function resolveAndExecuteStrategy(
   input: { leadId: string; conversationId: string; phase: "first_outreach" | "reply" },
 ): Promise<void> {
   let isSmsConversation = false;
+  let willDeliverViaSms = false;
   try {
     const [lead, conversation] = await Promise.all([
       prisma.lead.findFirst({
@@ -60,6 +61,13 @@ export async function resolveAndExecuteStrategy(
     ]);
     if (!lead || lead.automationPaused) return;
     isSmsConversation = conversation?.channelType === ListingChannelType.SMS;
+
+    // If the lead only has phone (no email), SMS will be used regardless of conversation origin.
+    const leadContact = await prisma.lead.findFirst({
+      where: { id: input.leadId, organizationId: ctx.organizationId },
+      select: { email: true, phone: true },
+    });
+    willDeliverViaSms = isSmsConversation || (!leadContact?.email?.trim() && !!leadContact?.phone?.trim());
 
     await computeLeadStrength(ctx, input.leadId);
     const strategy = await resolveStrategyDecision(ctx, {
@@ -80,7 +88,7 @@ export async function resolveAndExecuteStrategy(
     const strategyMessage = await generateStrategyMessage(ctx, {
       leadId: input.leadId,
       decision: strategy,
-      smsCompact: input.phase === "first_outreach" && isSmsConversation,
+      smsCompact: input.phase === "first_outreach" && willDeliverViaSms,
     });
     const generated =
       input.phase === "reply"
@@ -102,7 +110,7 @@ export async function resolveAndExecuteStrategy(
           })()
         : {
             ...strategyMessage,
-            body: isSmsConversation ? compactSmsBody(strategyMessage.body, 320) : strategyMessage.body,
+            body: willDeliverViaSms ? compactSmsBody(strategyMessage.body, 320) : strategyMessage.body,
           };
     const decision = await evaluateAutomationDecision(ctx, {
       leadId: input.leadId,
@@ -165,7 +173,7 @@ export async function resolveAndExecuteStrategy(
       phase: input.phase,
       error,
     });
-    if (input.phase === "reply" && isSmsConversation) {
+    if (input.phase === "reply" && (isSmsConversation || willDeliverViaSms)) {
       await sendFallbackReply(ctx, input);
     }
   }
