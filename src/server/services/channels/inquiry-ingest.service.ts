@@ -1,5 +1,6 @@
 import {
   ConversationReplyMode,
+  type Lead,
   LeadInboxStage,
   ListingChannelType,
   MessageAuthorType,
@@ -12,6 +13,7 @@ import { defaultReplyModeForChannel } from "@/domains/channels/constants";
 import { ActivityVerbs } from "@/domains/activity/verbs";
 import { normalizePhoneToE164 } from "@/lib/phone";
 import type { ActivitySourceContext } from "@/server/services/activity/activity.service";
+import { shouldBypassPhoneLeadDedupe } from "@/server/services/channels/application-phone-dedupe-bypass";
 import { prisma } from "@/server/db/client";
 import { logActivity } from "@/server/services/activity/activity.service";
 import { enqueueLeadIngested, enqueueMessageReceived } from "@/server/jobs/events";
@@ -169,21 +171,29 @@ export async function ingestInquiry(
     OTHER: MessageChannel.OTHER,
   };
 
+  const bypassLeadDedupeForQaPhone = shouldBypassPhoneLeadDedupe({
+    organizationId: ctx.organizationId,
+    contactPhoneRaw: params.contact.phone,
+  });
+
   const { lead, conversation, message, isNewLead } = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${dedupeKey}))`;
 
-    // --- Lead dedup: match by email first, then phone identity/phone within org ---
-    let lead = normalizedEmail
-      ? await tx.lead.findFirst({
-          where: {
-            organizationId: ctx.organizationId,
-            email: normalizedEmail,
-            ...(params.listingId ? { listingId: params.listingId } : {}),
-          },
-        })
-      : null;
+    // --- Lead dedup: match by email, then phone identity / lead.phone (unless QA allowlist) ---
+    let lead: Lead | null = null;
+    if (!bypassLeadDedupeForQaPhone && normalizedEmail) {
+      lead = await tx.lead.findFirst({
+        where: {
+          organizationId: ctx.organizationId,
+          email: normalizedEmail,
+          ...(params.listingId ? { listingId: params.listingId } : {}),
+        },
+      });
+    }
 
-    if (!lead && normalizedPhone) {
+    const skipPhoneLeadDedupe = bypassLeadDedupeForQaPhone;
+
+    if (!lead && normalizedPhone && !skipPhoneLeadDedupe) {
       const byIdentity = await tx.contactChannelIdentity.findFirst({
         where: {
           channelType: ListingChannelType.SMS,

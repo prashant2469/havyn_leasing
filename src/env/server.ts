@@ -43,6 +43,10 @@ export const serverEnv = createEnv({
     ZILLOW_RENTAL_FEED_COMPANY_WEBSITE: z.string().optional(),
     ZILLOW_RENTAL_FEED_COMPANY_LOGO_URL: z.string().optional(),
     VERCEL_URL: z.string().optional(),
+    APPLICATION_PHONE_DEDUPE_BYPASS_E164: z.string().optional(),
+    APPLICATION_PHONE_DEDUPE_BYPASS_REQUIRE_PREVIEW: z.string().optional(),
+    APPLICATION_PHONE_DEDUPE_BYPASS_ORG_IDS: z.string().optional(),
+    VERCEL_ENV: z.string().optional(),
   },
   runtimeEnv: {
     NODE_ENV: process.env.NODE_ENV,
@@ -83,6 +87,11 @@ export const serverEnv = createEnv({
     ZILLOW_RENTAL_FEED_COMPANY_WEBSITE: process.env.ZILLOW_RENTAL_FEED_COMPANY_WEBSITE,
     ZILLOW_RENTAL_FEED_COMPANY_LOGO_URL: process.env.ZILLOW_RENTAL_FEED_COMPANY_LOGO_URL,
     VERCEL_URL: process.env.VERCEL_URL,
+    APPLICATION_PHONE_DEDUPE_BYPASS_E164: process.env.APPLICATION_PHONE_DEDUPE_BYPASS_E164,
+    APPLICATION_PHONE_DEDUPE_BYPASS_REQUIRE_PREVIEW:
+      process.env.APPLICATION_PHONE_DEDUPE_BYPASS_REQUIRE_PREVIEW,
+    APPLICATION_PHONE_DEDUPE_BYPASS_ORG_IDS: process.env.APPLICATION_PHONE_DEDUPE_BYPASS_ORG_IDS,
+    VERCEL_ENV: process.env.VERCEL_ENV,
   },
   emptyStringAsUndefined: true,
 });
