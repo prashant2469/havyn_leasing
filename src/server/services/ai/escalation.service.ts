@@ -178,9 +178,6 @@ export async function detectEscalationSignals(
     } else if (body.includes("section 8") && (body.includes("refuse") || body.includes("won't") || body.includes("illegal"))) {
       reason = "POLICY_EXCEPTION";
       confidence = 0.7;
-    } else if (body.length < 12 && body.split(/\s+/).length <= 3) {
-      reason = "UNCLEAR_INTENT";
-      confidence = 0.45;
     }
 
     if (reason) {

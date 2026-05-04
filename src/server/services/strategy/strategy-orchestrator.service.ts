@@ -1,4 +1,4 @@
-import { LeadInboxStage, ListingChannelType } from "@prisma/client";
+import { AIEscalationReason, LeadInboxStage, ListingChannelType } from "@prisma/client";
 
 import type { OrgContext } from "@/server/auth/context";
 import { prisma } from "@/server/db/client";
@@ -82,6 +82,18 @@ export async function resolveAndExecuteStrategy(
               : lead.inboxStage,
         },
       });
+      // Auto-resolve stale low-confidence escalation flags so computeLeadStrength
+      // doesn't keep setting HUMAN_REQUIRED bucket on every run.
+      await prisma.aIEscalationFlag.updateMany({
+        where: {
+          organizationId: ctx.organizationId,
+          leadId: input.leadId,
+          status: { in: ["OPEN", "ACKNOWLEDGED"] },
+          reason: AIEscalationReason.UNCLEAR_INTENT,
+          confidenceScore: { lt: 0.6 },
+        },
+        data: { status: "RESOLVED", resolvedAt: new Date(), resolutionNote: "Auto-resolved: lead re-engaged via SMS" },
+      });
     }
     isSmsConversation = conversation?.channelType === ListingChannelType.SMS;
 
@@ -99,10 +111,14 @@ export async function resolveAndExecuteStrategy(
     });
 
     if (strategy.action === "ESCALATE") {
-      await prisma.lead.update({
-        where: { id: input.leadId },
-        data: { automationPaused: true, inboxStage: LeadInboxStage.NEEDS_HUMAN_REVIEW },
-      });
+      const isTrulySensitive =
+        strategy.intent === "SENSITIVE" || strategy.intent === "COMPLAINT";
+      if (isTrulySensitive || !willDeliverViaSms) {
+        await prisma.lead.update({
+          where: { id: input.leadId },
+          data: { automationPaused: true, inboxStage: LeadInboxStage.NEEDS_HUMAN_REVIEW },
+        });
+      }
       return;
     }
     if (strategy.action === "WAIT") return;
@@ -144,10 +160,14 @@ export async function resolveAndExecuteStrategy(
     });
 
     if (decision.decision === "ESCALATE") {
-      await prisma.lead.update({
-        where: { id: input.leadId },
-        data: { automationPaused: true, inboxStage: LeadInboxStage.NEEDS_HUMAN_REVIEW },
-      });
+      const isTrulySensitive =
+        strategy.intent === "SENSITIVE" || strategy.intent === "COMPLAINT";
+      if (isTrulySensitive || !willDeliverViaSms) {
+        await prisma.lead.update({
+          where: { id: input.leadId },
+          data: { automationPaused: true, inboxStage: LeadInboxStage.NEEDS_HUMAN_REVIEW },
+        });
+      }
       return;
     }
     if (decision.decision === "WAIT") return;

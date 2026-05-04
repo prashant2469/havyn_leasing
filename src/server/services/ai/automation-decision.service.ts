@@ -47,6 +47,35 @@ export async function evaluateAutomationDecision(
     orderBy: { sentAt: "desc" },
     select: { sentAt: true, channel: true, body: true },
   });
+
+  const isSmsReplyPhase = input.phase === "reply" && latestInbound?.channel === "SMS";
+
+  // --- SMS ALWAYS-ON FAST PATH ---
+  // For SMS replies, only hard-block for truly dangerous content. Everything else sends.
+  if (isSmsReplyPhase) {
+    if (input.intent === "SENSITIVE" || input.intent === "COMPLAINT") {
+      return { decision: "ESCALATE", reasons: ["sms_sensitive_or_complaint"] };
+    }
+    if (conversation.replyMode === "MANUAL_ONLY") {
+      return { decision: "DRAFT_FOR_REVIEW", reasons: ["manual_only_reply_mode"] };
+    }
+    const outboundSinceInbound = await prisma.message.count({
+      where: {
+        conversationId: input.conversationId,
+        direction: "OUTBOUND",
+        ...(latestInbound ? { sentAt: { gte: latestInbound.sentAt } } : {}),
+      },
+    });
+    if (outboundSinceInbound >= 3) {
+      return { decision: "WAIT", reasons: ["sms_outbound_limit_reached"] };
+    }
+    if (input.intent === "ACKNOWLEDGMENT") {
+      return { decision: "WAIT", reasons: ["low_signal_acknowledgment"] };
+    }
+    return { decision: "AUTO_REPLY", reasons: ["sms_always_on"] };
+  }
+
+  // --- STANDARD PATH (non-SMS or first_outreach) ---
   const latestInboundIntent = classifyInboundIntent(latestInbound?.body ?? "");
   const canResumeEscalatedSmsFlow =
     input.phase === "reply" &&

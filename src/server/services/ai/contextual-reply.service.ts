@@ -60,20 +60,55 @@ function parseQualificationHighlights(message: string): string[] {
   return highlights;
 }
 
+const QUESTION_CATEGORY_MAP: Array<{ pattern: RegExp; category: string }> = [
+  { pattern: /\b(pet|dog|cat|animal)\b/i, category: "PET_POLICY" },
+  { pattern: /\b(park|garage|carport|car)\b/i, category: "PARKING" },
+  { pattern: /\b(utilit|electric|gas|water|trash|sewer|internet|wifi)\b/i, category: "UTILITIES" },
+  { pattern: /\b(amenit|gym|pool|fitness|rooftop|lounge)\b/i, category: "AMENITIES" },
+  { pattern: /\b(lease|term|month-to-month|renewal)\b/i, category: "LEASE_TERMS" },
+  { pattern: /\b(move[- ]?in|deposit|security deposit|first month)\b/i, category: "MOVE_IN" },
+  { pattern: /\b(fee|cost|application fee|admin fee)\b/i, category: "FEES_AND_COSTS" },
+  { pattern: /\b(mainten|repair|request|fix)\b/i, category: "MAINTENANCE" },
+  { pattern: /\b(rule|polic|quiet hour|noise|smoking|guest)\b/i, category: "RULES_AND_POLICIES" },
+  { pattern: /\b(neighbor|area|nearby|walk|transit|school)\b/i, category: "NEIGHBORHOOD" },
+];
+
+function matchFactToQuestion(
+  message: string,
+  facts: Array<{ question: string; answer: string; category?: string }>,
+): { question: string; answer: string } | null {
+  if (facts.length === 0) return null;
+  const lower = message.toLowerCase();
+  for (const { pattern, category } of QUESTION_CATEGORY_MAP) {
+    if (pattern.test(lower)) {
+      const match = facts.find(
+        (f) => (f as { category?: string }).category === category && f.answer.trim(),
+      );
+      if (match) return match;
+    }
+  }
+  const keywordMatch = facts.find((f) => {
+    const qWords = f.question.toLowerCase().split(/\s+/);
+    return qWords.some((w) => w.length > 3 && lower.includes(w));
+  });
+  if (keywordMatch?.answer.trim()) return keywordMatch;
+  return facts.find((f) => f.answer.trim()) ?? null;
+}
+
 function heuristicReply(input: {
   firstName: string;
   listingTitle?: string;
   intent: InboundIntentType;
   latestInbound: string;
   gapLabels: string[];
-  propertyFacts: Array<{ question: string; answer: string }>;
+  propertyFacts: Array<{ question: string; answer: string; category?: string }>;
 }): string {
   const baseGreeting = `Hi ${input.firstName},`;
   const leadRef = input.listingTitle ? ` about ${input.listingTitle}` : "";
   const topGap = input.gapLabels.slice(0, 2).join(" and ");
-  const fact = input.propertyFacts[0];
 
   if (input.intent === "PROPERTY_QUESTION") {
+    const fact = matchFactToQuestion(input.latestInbound, input.propertyFacts);
     if (fact) {
       return `${baseGreeting}\n\nGreat question${leadRef}. ${fact.answer}\n\nIf helpful, I can also share current tour times.`;
     }

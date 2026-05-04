@@ -100,6 +100,10 @@ export async function enqueueMessageReceived(payload: MessageReceivedPayload) {
     try {
       console.info("[automation] after.start message/received", payload);
       const ctx = await getAutomationOrgContext(payload.organizationId);
+      // Dispatch first — this is the time-critical reply path.
+      // Copilot analysis (which may create escalation flags) runs after so it
+      // cannot block the auto-reply pipeline.
+      await dispatchAutomationReply(ctx, payload.leadId, payload.conversationId);
       try {
         await runCopilotAnalysis(ctx, payload.leadId, payload.conversationId);
       } catch (copilotError) {
@@ -109,7 +113,6 @@ export async function enqueueMessageReceived(payload: MessageReceivedPayload) {
           error: copilotError,
         });
       }
-      await dispatchAutomationReply(ctx, payload.leadId, payload.conversationId);
       console.info("[automation] after.end message/received", {
         leadId: payload.leadId,
         conversationId: payload.conversationId,
