@@ -121,19 +121,22 @@ export async function generateContextualReply(
   });
   if (!conversation) throw new Error("Conversation not found");
 
+  const latestInboundMessage = [...conversation.messages].reverse().find((m) => m.direction === "INBOUND");
+  const effectiveInboundChannel = latestInboundMessage?.channel ?? null;
   const suggestedChannel: MessageChannel =
-    conversation.channelType === "EMAIL"
-      ? "EMAIL"
-      : conversation.channelType === "SMS"
-        ? "SMS"
-        : "IN_APP";
+    effectiveInboundChannel === "SMS"
+      ? "SMS"
+      : conversation.channelType === "EMAIL"
+        ? "EMAIL"
+        : conversation.channelType === "SMS"
+          ? "SMS"
+          : "IN_APP";
   const relevantMessages =
     conversation.channelType === "SMS"
       ? conversation.messages.filter((m) => m.channel === "SMS")
       : conversation.messages;
   const messagesForReply = relevantMessages.length > 0 ? relevantMessages : conversation.messages;
-  const latestInbound =
-    [...messagesForReply].reverse().find((m) => m.direction === "INBOUND")?.body ?? "";
+  const latestInbound = latestInboundMessage?.body ?? "";
   const classified = classifyInboundIntent(latestInbound);
   const gapLabels = await qualificationGapLabelsForLead(input.leadId);
   const propertyId = conversation.lead?.listing?.unit?.propertyId ?? null;

@@ -60,8 +60,9 @@ export async function evaluateAutomationDecision(
   const lastInbound = await prisma.message.findFirst({
     where: { conversationId: input.conversationId, direction: "INBOUND" },
     orderBy: { sentAt: "desc" },
-    select: { sentAt: true },
+    select: { sentAt: true, channel: true },
   });
+  const effectiveChannelType = lastInbound?.channel === "SMS" ? "SMS" : conversation.channelType;
   const outboundSinceInbound = await prisma.message.count({
     where: {
       conversationId: input.conversationId,
@@ -69,7 +70,7 @@ export async function evaluateAutomationDecision(
       ...(lastInbound ? { sentAt: { gte: lastInbound.sentAt } } : {}),
     },
   });
-  const outboundLimit = conversation.channelType === "SMS" ? 3 : 2;
+  const outboundLimit = effectiveChannelType === "SMS" ? 3 : 2;
   if (outboundSinceInbound >= outboundLimit) {
     return { decision: "WAIT", reasons: ["outbound_limit_reached"] };
   }
@@ -96,12 +97,12 @@ export async function evaluateAutomationDecision(
     return { decision: "DRAFT_FOR_REVIEW", reasons: ["weak_or_disqualified_strength", ...reasons] };
   }
 
-  const minAutoReplyConfidence = conversation.channelType === "SMS" ? 0.5 : 0.7;
+  const minAutoReplyConfidence = effectiveChannelType === "SMS" ? 0.5 : 0.7;
   const allowAutoReplyDuringQuietHours =
-    conversation.channelType === "SMS" || input.phase === "first_outreach";
+    effectiveChannelType === "SMS" || input.phase === "first_outreach";
   if (input.confidence >= minAutoReplyConfidence && (!quietHours || allowAutoReplyDuringQuietHours)) {
     const confidenceReason =
-      conversation.channelType === "SMS" ? "sms_medium_confidence_autoreply" : "high_confidence_safe_intent";
+      effectiveChannelType === "SMS" ? "sms_medium_confidence_autoreply" : "high_confidence_safe_intent";
     const quietHoursReason = quietHours && allowAutoReplyDuringQuietHours ? ["quiet_hours_sms_override"] : [];
     return {
       decision: "AUTO_REPLY",
