@@ -467,7 +467,11 @@ export async function generateContextualReply(
     selectedTourSlot,
   });
   const transcript = messagesForReply.map((m) => `${m.direction}: ${m.body}`).join("\n");
-  const shouldBypassLlm = classified.intent === "PROPERTY_QUESTION";
+  const directInfoQuestion =
+    /\b(rent|price|address|location|where is|where's|available|availability|pet|parking|utility|deposit|fee)\b/i.test(
+      latestInbound,
+    ) && latestInbound.includes("?");
+  const shouldBypassLlm = classified.intent === "PROPERTY_QUESTION" || directInfoQuestion;
   const llm = shouldBypassLlm
     ? null
     : await tryLlmReplyDraft({

@@ -7,7 +7,7 @@ const LEGAL_PATTERN =
 const COMPLAINT_PATTERN =
   /(upset|angry|frustrated|terrible|unacceptable|awful|horrible|disappointed|not happy)/i;
 const PROPERTY_Q_PATTERN =
-  /(pet|parking|utility|amenit|lease term|deposit|fee|application fee|move[- ]?in|availability|sqft|square foot|laundry|neighborhood|policy|address|location|where is|where's)/i;
+  /(pet|parking|utility|amenit|lease term|deposit|fee|application fee|move[- ]?in|availability|sqft|square foot|laundry|neighborhood|policy|address|location|where is|where's|rent|price)/i;
 const TOUR_INTEREST_PATTERN =
   /(tour|showing|see (the )?(home|apartment|unit)|visit|walkthrough|walk through|available times)/i;
 const TOUR_CONFIRM_PATTERN =
