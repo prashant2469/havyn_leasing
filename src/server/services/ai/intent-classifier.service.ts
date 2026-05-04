@@ -13,6 +13,8 @@ const TOUR_INTEREST_PATTERN =
 const TOUR_CONFIRM_PATTERN =
   /(works for me|i('| a)?ll take|book me|confirm|that time works|see you then|lets do|let's do|tuesday|wednesday|thursday|friday|saturday|sunday|monday).*(\d{1,2}(:\d{2})?\s?(am|pm)?)/i;
 const TIME_ONLY_CONFIRM_PATTERN = /^\s*\d{1,2}(:\d{2})?\s?(am|pm)\s*$/i;
+const WORKS_TIME_CONFIRM_PATTERN =
+  /\b\d{1,2}(:\d{2})?\s?(am|pm)\b.*\b(works|work|good|fine|perfect|confirm|book)\b|\b(works|work|good|fine|perfect|confirm|book)\b.*\b\d{1,2}(:\d{2})?\s?(am|pm)\b/i;
 const SCHEDULE_PREF_PATTERN =
   /(morning|mornings|afternoon|afternoons|evening|evenings|weekday|weekdays|weekend|weekends|anytime|after work|before noon|early|late|flexible|works better)/i;
 const APPLICATION_Q_PATTERN =
@@ -80,6 +82,15 @@ export function classifyInboundIntent(messageBody: string): IntentClassification
       intent: InboundIntentType.TOUR_CONFIRMATION,
       confidence: 0.8,
       reasons: ["time_only_confirmation"],
+      isSensitive: false,
+    };
+  }
+
+  if (WORKS_TIME_CONFIRM_PATTERN.test(lower)) {
+    return {
+      intent: InboundIntentType.TOUR_CONFIRMATION,
+      confidence: 0.84,
+      reasons: ["time_with_confirmation_language"],
       isSensitive: false,
     };
   }
