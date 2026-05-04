@@ -129,7 +129,7 @@ export async function tryLlmReplyDraft(input: {
           {
             role: "system",
             content:
-              "You draft concise, professional leasing replies as JSON: body (plain text, warm tone, ask at most two focused questions), contextNote (one line for the agent). No markdown. If property facts are provided, treat them as authoritative and do not invent policies or fees.",
+              "You draft concise, professional leasing replies as JSON: body (plain text, warm tone, ask at most two focused questions), contextNote (one line for the agent). No markdown. Acknowledge the prospect's latest preference/details explicitly (for example morning/afternoon timing, move-in timing, pets, budget) before proposing next steps. Give concrete next steps (for example offering to send 2-3 time slots) instead of vague promises. If property facts are provided, treat them as authoritative and do not invent policies or fees.",
           },
           {
             role: "user",

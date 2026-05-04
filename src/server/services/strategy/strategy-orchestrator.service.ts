@@ -117,6 +117,7 @@ export async function resolveAndExecuteStrategy(
       conversationId: input.conversationId,
       intent: strategy.intent,
       confidence: strategy.confidence,
+      phase: input.phase,
     });
 
     if (decision.decision === "ESCALATE") {

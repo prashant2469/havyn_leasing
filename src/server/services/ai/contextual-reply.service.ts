@@ -26,6 +26,40 @@ function compactSmsDraft(input: string, maxChars = 280): string {
   return `${oneLine.slice(0, maxChars - 1).trimEnd()}…`;
 }
 
+function parseTourPreference(message: string): string | null {
+  const lower = message.toLowerCase();
+  const segments: string[] = [];
+  if (/\bmorning(s)?\b/.test(lower)) segments.push("mornings");
+  if (/\bafternoon(s)?\b/.test(lower)) segments.push("afternoons");
+  if (/\bevening(s)?\b/.test(lower)) segments.push("evenings");
+  if (/\bweekdays?\b/.test(lower)) segments.push("weekdays");
+  if (/\bweekends?\b/.test(lower)) segments.push("weekends");
+  if (/\bnext week\b/.test(lower)) segments.push("next week");
+  else if (/\bthis week\b/.test(lower)) segments.push("this week");
+  if (segments.length === 0) return null;
+  return segments.join(" ");
+}
+
+function parseQualificationHighlights(message: string): string[] {
+  const lower = message.toLowerCase();
+  const highlights: string[] = [];
+  const moveInDate = message.match(/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/)?.[0];
+  if (moveInDate) {
+    highlights.push(`move-in date ${moveInDate}`);
+  } else if (/\bnext week\b/.test(lower)) {
+    highlights.push("a next-week move-in");
+  } else if (/\bthis month\b/.test(lower)) {
+    highlights.push("a move-in this month");
+  }
+
+  if (/\bno pets?\b/.test(lower)) highlights.push("no pets");
+  else if (/\bpets?\b/.test(lower)) highlights.push("pets");
+
+  const budgetMatch = lower.match(/\b(under|around|about)\s+\$?\d{3,5}\b/)?.[0] ?? message.match(/\$\d{3,5}/)?.[0];
+  if (budgetMatch) highlights.push(`budget ${budgetMatch}`);
+  return highlights;
+}
+
 function heuristicReply(input: {
   firstName: string;
   listingTitle?: string;
@@ -47,7 +81,9 @@ function heuristicReply(input: {
   }
 
   if (input.intent === "TOUR_INTEREST" || input.intent === "TOUR_CONFIRMATION") {
-    return `${baseGreeting}\n\nPerfect — happy to help with a tour${leadRef}. I can send 2-3 available times that match the showing calendar.`;
+    const pref = parseTourPreference(input.latestInbound);
+    const prefAck = pref ? `Great, ${pref} works.` : "Great, happy to help with a tour.";
+    return `${baseGreeting}\n\n${prefAck} I can send 2-3 available times${leadRef} that match the showing calendar.`;
   }
 
   if (input.intent === "APPLICATION_QUESTION") {
@@ -55,7 +91,9 @@ function heuristicReply(input: {
   }
 
   if (input.intent === "QUALIFICATION_RESPONSE") {
-    return `${baseGreeting}\n\nThanks for sharing those details${leadRef}. ${topGap ? `To keep options accurate, can you also share ${topGap}?` : "I’ll use this to narrow your best options and tour times."}`;
+    const highlights = parseQualificationHighlights(input.latestInbound);
+    const highlightText = highlights.length > 0 ? `I noted ${highlights.join(" and ")}. ` : "";
+    return `${baseGreeting}\n\nThanks for sharing those details${leadRef}. ${highlightText}${topGap ? `To keep options accurate, can you also share ${topGap}?` : "I’ll use this to narrow your best options and tour times."}`;
   }
 
   if (input.intent === "ACKNOWLEDGMENT") {
@@ -89,8 +127,13 @@ export async function generateContextualReply(
       : conversation.channelType === "SMS"
         ? "SMS"
         : "IN_APP";
+  const relevantMessages =
+    conversation.channelType === "SMS"
+      ? conversation.messages.filter((m) => m.channel === "SMS")
+      : conversation.messages;
+  const messagesForReply = relevantMessages.length > 0 ? relevantMessages : conversation.messages;
   const latestInbound =
-    [...conversation.messages].reverse().find((m) => m.direction === "INBOUND")?.body ?? "";
+    [...messagesForReply].reverse().find((m) => m.direction === "INBOUND")?.body ?? "";
   const classified = classifyInboundIntent(latestInbound);
   const gapLabels = await qualificationGapLabelsForLead(input.leadId);
   const propertyId = conversation.lead?.listing?.unit?.propertyId ?? null;
@@ -104,7 +147,7 @@ export async function generateContextualReply(
     gapLabels,
     propertyFacts: kb?.facts ?? [],
   });
-  const transcript = conversation.messages.map((m) => `${m.direction}: ${m.body}`).join("\n");
+  const transcript = messagesForReply.map((m) => `${m.direction}: ${m.body}`).join("\n");
   const llm = await tryLlmReplyDraft({
     transcript,
     firstName: conversation.lead?.firstName ?? "there",

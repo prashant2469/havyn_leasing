@@ -16,6 +16,7 @@ type Input = {
   conversationId: string;
   intent: InboundIntentType;
   confidence: number;
+  phase?: "first_outreach" | "reply";
 };
 
 function isQuietHours(date = new Date()): boolean {
@@ -96,7 +97,8 @@ export async function evaluateAutomationDecision(
   }
 
   const minAutoReplyConfidence = conversation.channelType === "SMS" ? 0.5 : 0.7;
-  const allowAutoReplyDuringQuietHours = conversation.channelType === "SMS";
+  const allowAutoReplyDuringQuietHours =
+    conversation.channelType === "SMS" || input.phase === "first_outreach";
   if (input.confidence >= minAutoReplyConfidence && (!quietHours || allowAutoReplyDuringQuietHours)) {
     const confidenceReason =
       conversation.channelType === "SMS" ? "sms_medium_confidence_autoreply" : "high_confidence_safe_intent";

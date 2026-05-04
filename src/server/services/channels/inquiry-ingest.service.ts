@@ -114,6 +114,7 @@ export async function resolveLeadByPhone(params: {
         ...(params.listingId ? { listingId: params.listingId } : {}),
       },
     },
+    orderBy: { lead: { updatedAt: "desc" } },
     select: { leadId: true },
   });
   if (byIdentity?.leadId) {
@@ -131,6 +132,7 @@ export async function resolveLeadByPhone(params: {
       phone: normalizedPhone,
       ...(params.listingId ? { listingId: params.listingId } : {}),
     },
+    orderBy: { updatedAt: "desc" },
   });
 }
 
