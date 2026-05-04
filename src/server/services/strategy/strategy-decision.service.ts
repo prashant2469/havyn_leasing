@@ -90,6 +90,10 @@ export async function resolveStrategyDecision(
   const topRecs = recommendations.filter((r) => r.score >= 0.6);
 
   const isActiveSmsReply = latestInbound?.channel === "SMS";
+  const effectiveBucket =
+    bucket === LeadStrategyBucket.HUMAN_REQUIRED && isActiveSmsReply
+      ? LeadStrategyBucket.PROMISING_INCOMPLETE
+      : bucket;
   if (bucket === LeadStrategyBucket.HUMAN_REQUIRED && !isActiveSmsReply) {
     return {
       action: "ESCALATE",
@@ -123,11 +127,11 @@ export async function resolveStrategyDecision(
     };
   }
 
-  if (bucket === LeadStrategyBucket.TOUR_READY) {
+  if (effectiveBucket === LeadStrategyBucket.TOUR_READY) {
     if (lead.tours.length > 0) {
       return {
         action: "WAIT",
-        bucket,
+        bucket: effectiveBucket,
         reasons: ["tour_already_scheduled"],
         readiness,
         intent: intent.intent,
@@ -137,7 +141,7 @@ export async function resolveStrategyDecision(
     if (lead.applications.length > 0 && lead.applications[0]?.status !== "SUBMITTED") {
       return {
         action: "APPLICATION",
-        bucket,
+        bucket: effectiveBucket,
         reasons: ["tour_done_or_app_in_progress"],
         readiness,
         intent: intent.intent,
@@ -147,7 +151,7 @@ export async function resolveStrategyDecision(
     if (topRecs.length > 0 && topRecs.some((r) => r.score >= 0.7)) {
       return {
         action: "RECOMMEND",
-        bucket,
+        bucket: effectiveBucket,
         reasons: ["high_confidence_alternatives"],
         recommendationIds: topRecs.map((r) => r.id),
         readiness,
@@ -157,7 +161,7 @@ export async function resolveStrategyDecision(
     }
     return {
       action: "TOUR_OFFER",
-      bucket,
+      bucket: effectiveBucket,
       reasons: ["tour_ready_bucket", ...bucketFallbackReason],
       tourPropertyId: readiness.qualifiedListings.find((l) => l.hasSlots)?.listingId,
       readiness,
@@ -166,11 +170,11 @@ export async function resolveStrategyDecision(
     };
   }
 
-  if (bucket === LeadStrategyBucket.PROMISING_INCOMPLETE) {
+  if (effectiveBucket === LeadStrategyBucket.PROMISING_INCOMPLETE) {
     if (intent.intent === "TOUR_INTEREST") {
       return {
         action: "TOUR_OFFER",
-        bucket,
+        bucket: effectiveBucket,
         reasons: ["tour_interest_fast_track"],
         tourPropertyId: readiness.qualifiedListings.find((l) => l.hasSlots)?.listingId,
         readiness,
@@ -180,7 +184,7 @@ export async function resolveStrategyDecision(
     }
     return {
       action: "QUALIFY",
-      bucket,
+      bucket: effectiveBucket,
       reasons: ["missing_qualification_data", ...bucketFallbackReason],
       qualificationKeysToAsk: qual.missing.slice(0, 2),
       readiness,
@@ -189,10 +193,10 @@ export async function resolveStrategyDecision(
     };
   }
 
-  if (bucket === LeadStrategyBucket.PORTFOLIO_CANDIDATE) {
+  if (effectiveBucket === LeadStrategyBucket.PORTFOLIO_CANDIDATE) {
     return {
       action: "RECOMMEND",
-      bucket,
+      bucket: effectiveBucket,
       reasons: ["portfolio_fit_better_than_primary", ...bucketFallbackReason],
       recommendationIds: topRecs.map((r) => r.id),
       readiness,
@@ -201,11 +205,11 @@ export async function resolveStrategyDecision(
     };
   }
 
-  if (bucket === LeadStrategyBucket.NURTURE) {
+  if (effectiveBucket === LeadStrategyBucket.NURTURE) {
     if (hasRecentOutbound) {
       return {
         action: "WAIT",
-        bucket,
+        bucket: effectiveBucket,
         reasons: ["recent_outbound_sent"],
         readiness,
         intent: intent.intent,
@@ -214,7 +218,7 @@ export async function resolveStrategyDecision(
     }
     return {
       action: "NURTURE",
-      bucket,
+      bucket: effectiveBucket,
       reasons: ["nurture_lane", ...bucketFallbackReason],
       readiness,
       intent: intent.intent,
@@ -222,11 +226,11 @@ export async function resolveStrategyDecision(
     };
   }
 
-  if (bucket === LeadStrategyBucket.WEAK_HOLD) {
+  if (effectiveBucket === LeadStrategyBucket.WEAK_HOLD) {
     if (!latestInbound) {
       return {
         action: "WAIT",
-        bucket,
+        bucket: effectiveBucket,
         reasons: ["weak_hold_no_reengagement"],
         readiness,
         intent: intent.intent,
@@ -235,7 +239,7 @@ export async function resolveStrategyDecision(
     }
     return {
       action: "NURTURE",
-      bucket,
+      bucket: effectiveBucket,
       reasons: ["weak_hold_reengaged", ...bucketFallbackReason],
       readiness,
       intent: intent.intent,
@@ -245,7 +249,7 @@ export async function resolveStrategyDecision(
 
   return {
     action: "WAIT",
-    bucket,
+    bucket: effectiveBucket,
     reasons: ["default_wait"],
     readiness,
     intent: intent.intent,
