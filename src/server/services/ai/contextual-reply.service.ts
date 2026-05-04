@@ -380,6 +380,11 @@ export async function generateContextualReply(
   const messagesForReply = relevantMessages.length > 0 ? relevantMessages : conversation.messages;
   const latestInbound = latestInboundMessage?.body ?? "";
   const classified = classifyInboundIntent(latestInbound);
+  const directInfoQuestion =
+    /\b(rent|price|address|location|where is|where's|available|availability|pet|parking|utility|deposit|fee)\b/i.test(
+      latestInbound,
+    ) && latestInbound.includes("?");
+  const effectiveIntent: InboundIntentType = directInfoQuestion ? "PROPERTY_QUESTION" : classified.intent;
   const gapLabels = await qualificationGapLabelsForLead(input.leadId);
   const propertyId = conversation.lead?.listing?.unit?.propertyId ?? null;
   const unitId = conversation.lead?.listing?.unit?.id ?? null;
@@ -459,7 +464,7 @@ export async function generateContextualReply(
   const heuristicBody = heuristicReply({
     firstName: conversation.lead?.firstName ?? "there",
     listingTitle: conversation.lead?.listing?.title ?? undefined,
-    intent: classified.intent,
+    intent: effectiveIntent,
     latestInbound,
     gapLabels,
     propertyFacts: propertyFactsForReply,
@@ -467,11 +472,7 @@ export async function generateContextualReply(
     selectedTourSlot,
   });
   const transcript = messagesForReply.map((m) => `${m.direction}: ${m.body}`).join("\n");
-  const directInfoQuestion =
-    /\b(rent|price|address|location|where is|where's|available|availability|pet|parking|utility|deposit|fee)\b/i.test(
-      latestInbound,
-    ) && latestInbound.includes("?");
-  const shouldBypassLlm = classified.intent === "PROPERTY_QUESTION" || directInfoQuestion;
+  const shouldBypassLlm = effectiveIntent === "PROPERTY_QUESTION";
   const llm = shouldBypassLlm
     ? null
     : await tryLlmReplyDraft({
@@ -491,9 +492,9 @@ export async function generateContextualReply(
   return {
     body,
     suggestedChannel,
-    intent: classified.intent,
+    intent: effectiveIntent,
     confidence,
-    contextNote: [llm?.contextNote, `intent=${classified.intent}`].filter(Boolean).join(" · "),
+    contextNote: [llm?.contextNote, `intent=${effectiveIntent}`].filter(Boolean).join(" · "),
     modelId: llm ? "openai-json-contextual" : "heuristic-contextual-v1",
     selectedTourSlot,
   };
