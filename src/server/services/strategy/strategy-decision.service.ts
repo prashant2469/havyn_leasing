@@ -52,7 +52,7 @@ export async function resolveStrategyDecision(
     prisma.message.findFirst({
       where: { conversationId: input.conversationId, direction: "INBOUND" },
       orderBy: { sentAt: "desc" },
-      select: { body: true, sentAt: true },
+      select: { body: true, sentAt: true, channel: true },
     }),
     prisma.message.findFirst({
       where: { conversationId: input.conversationId, direction: "OUTBOUND" },
@@ -89,7 +89,8 @@ export async function resolveStrategyDecision(
   );
   const topRecs = recommendations.filter((r) => r.score >= 0.6);
 
-  if (bucket === LeadStrategyBucket.HUMAN_REQUIRED) {
+  const isActiveSmsReply = latestInbound?.channel === "SMS";
+  if (bucket === LeadStrategyBucket.HUMAN_REQUIRED && !isActiveSmsReply) {
     return {
       action: "ESCALATE",
       bucket,
@@ -101,6 +102,17 @@ export async function resolveStrategyDecision(
   }
 
   if (lead.automationPaused) {
+    if (isActiveSmsReply && (intent.intent === "TOUR_INTEREST" || intent.intent === "TOUR_CONFIRMATION")) {
+      return {
+        action: "TOUR_OFFER",
+        bucket: LeadStrategyBucket.PROMISING_INCOMPLETE,
+        reasons: ["automation_resumed_via_sms_scheduling_intent"],
+        tourPropertyId: readiness.qualifiedListings.find((l) => l.hasSlots)?.listingId,
+        readiness,
+        intent: intent.intent,
+        confidence: intent.confidence,
+      };
+    }
     return {
       action: "WAIT",
       bucket,

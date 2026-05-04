@@ -4,6 +4,7 @@ import type { OrgContext } from "@/server/auth/context";
 import { prisma } from "@/server/db/client";
 import { evaluateAutomationDecision } from "@/server/services/ai/automation-decision.service";
 import { generateContextualReply } from "@/server/services/ai/contextual-reply.service";
+import { classifyInboundIntent } from "@/server/services/ai/intent-classifier.service";
 import { computeLeadStrength } from "@/server/services/ai/lead-strength.service";
 import { getQualificationCompleteness } from "@/server/services/leasing/qualification-score.service";
 import {
@@ -49,7 +50,7 @@ export async function resolveAndExecuteStrategy(
     const [lead, conversation] = await Promise.all([
       prisma.lead.findFirst({
         where: { id: input.leadId, organizationId: ctx.organizationId },
-        select: { id: true, automationPaused: true },
+        select: { id: true, automationPaused: true, inboxStage: true },
       }),
       prisma.conversation.findFirst({
         where: {
@@ -59,7 +60,29 @@ export async function resolveAndExecuteStrategy(
         select: { channelType: true },
       }),
     ]);
-    if (!lead || lead.automationPaused) return;
+    if (!lead) return;
+    if (lead.automationPaused) {
+      if (input.phase !== "reply") return;
+      const latestInbound = await prisma.message.findFirst({
+        where: { conversationId: input.conversationId, direction: "INBOUND" },
+        orderBy: { sentAt: "desc" },
+        select: { channel: true, body: true },
+      });
+      const intent = classifyInboundIntent(latestInbound?.body ?? "");
+      const canResumeAutomation =
+        latestInbound?.channel === "SMS" && intent.intent !== "SENSITIVE" && intent.intent !== "COMPLAINT";
+      if (!canResumeAutomation) return;
+      await prisma.lead.update({
+        where: { id: input.leadId },
+        data: {
+          automationPaused: false,
+          inboxStage:
+            lead.inboxStage === LeadInboxStage.NEEDS_HUMAN_REVIEW
+              ? LeadInboxStage.AWAITING_RESPONSE
+              : lead.inboxStage,
+        },
+      });
+    }
     isSmsConversation = conversation?.channelType === ListingChannelType.SMS;
 
     // AUTO delivery prefers SMS when a phone number exists.
