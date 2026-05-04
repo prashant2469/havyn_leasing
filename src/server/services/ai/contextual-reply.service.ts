@@ -425,25 +425,59 @@ export async function generateContextualReply(
     laundryType: property?.laundryType ?? null,
     availableSlots: availableTourSlots,
   });
+  const directPropertyFacts: Array<{ question: string; answer: string; category?: string }> = [];
+  const rentFact = formatMoney(conversation.lead?.listing?.monthlyRent);
+  if (rentFact) {
+    directPropertyFacts.push({
+      question: "What is the rent?",
+      answer: `The rent is ${rentFact}/month.`,
+      category: "FEES_AND_COSTS",
+    });
+  }
+  const addressFact = [property?.street, property?.city, property?.state, property?.postalCode]
+    .filter(Boolean)
+    .join(", ");
+  if (addressFact) {
+    directPropertyFacts.push({
+      question: "What is the address?",
+      answer: `The address is ${addressFact}.`,
+      category: "GENERAL",
+    });
+  }
+  if (conversation.lead?.listing?.availableFrom) {
+    directPropertyFacts.push({
+      question: "When is it available?",
+      answer: `The home is available from ${conversation.lead.listing.availableFrom.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })}.`,
+      category: "MOVE_IN",
+    });
+  }
+  const propertyFactsForReply = [...directPropertyFacts, ...(kb?.facts ?? [])];
   const heuristicBody = heuristicReply({
     firstName: conversation.lead?.firstName ?? "there",
     listingTitle: conversation.lead?.listing?.title ?? undefined,
     intent: classified.intent,
     latestInbound,
     gapLabels,
-    propertyFacts: kb?.facts ?? [],
+    propertyFacts: propertyFactsForReply,
     availableTourSlots,
     selectedTourSlot,
   });
   const transcript = messagesForReply.map((m) => `${m.direction}: ${m.body}`).join("\n");
-  const llm = await tryLlmReplyDraft({
-    transcript,
-    firstName: conversation.lead?.firstName ?? "there",
-    listingTitle: conversation.lead?.listing?.title ?? undefined,
-    heuristicBody,
-    propertyFactsBlock: kb?.promptBlock,
-    listingContextBlock,
-  });
+  const shouldBypassLlm = classified.intent === "PROPERTY_QUESTION";
+  const llm = shouldBypassLlm
+    ? null
+    : await tryLlmReplyDraft({
+        transcript,
+        firstName: conversation.lead?.firstName ?? "there",
+        listingTitle: conversation.lead?.listing?.title ?? undefined,
+        heuristicBody,
+        propertyFactsBlock: kb?.promptBlock,
+        listingContextBlock,
+      });
   const llmBody = llm?.body || heuristicBody;
   const body = suggestedChannel === "SMS" ? compactSmsDraft(llmBody, 280) : llmBody;
   const confidence = llm
