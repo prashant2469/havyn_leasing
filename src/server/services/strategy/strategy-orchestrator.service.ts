@@ -8,6 +8,7 @@ import { classifyInboundIntent } from "@/server/services/ai/intent-classifier.se
 import { computeLeadStrength } from "@/server/services/ai/lead-strength.service";
 import { getQualificationCompleteness } from "@/server/services/leasing/qualification-score.service";
 import { createTour } from "@/server/services/leasing/tour.service";
+import { getFactsForAI } from "@/server/services/properties/property-fact.service";
 import {
   transitionAfterFirstOutreach,
   transitionOnQualificationThreshold,
@@ -26,6 +27,115 @@ function compactSmsBody(input: string, maxChars = 320): string {
     .trim();
   if (oneLine.length <= maxChars) return oneLine;
   return `${oneLine.slice(0, maxChars - 1).trimEnd()}…`;
+}
+
+function formatMoney(value: unknown): string | null {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return null;
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
+}
+
+async function buildDirectPropertyAnswer(ctx: OrgContext, input: {
+  leadId: string;
+  latestInbound: string;
+}): Promise<string | null> {
+  const lower = input.latestInbound.toLowerCase();
+  const isDirectInfoQuestion =
+    /\b(rent|price|address|location|where is|where's|pet|parking|utility|utilities|deposit|fee|available|availability)\b/i.test(
+      lower,
+    ) && input.latestInbound.includes("?");
+  if (!isDirectInfoQuestion) return null;
+
+  const lead = await prisma.lead.findFirst({
+    where: { id: input.leadId, organizationId: ctx.organizationId },
+    select: {
+      firstName: true,
+      listing: {
+        select: {
+          title: true,
+          monthlyRent: true,
+          availableFrom: true,
+          unit: {
+            select: {
+              id: true,
+              propertyId: true,
+              property: {
+                select: {
+                  street: true,
+                  city: true,
+                  state: true,
+                  postalCode: true,
+                  parkingType: true,
+                  utilityNotes: true,
+                  petRules: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!lead?.listing?.unit?.propertyId) return null;
+
+  const facts = await getFactsForAI(ctx, {
+    propertyId: lead.listing.unit.propertyId,
+    unitId: lead.listing.unit.id,
+    maxFacts: 20,
+  });
+
+  const answers: string[] = [];
+  if (/\b(rent|price)\b/i.test(lower)) {
+    const rent = formatMoney(lead.listing.monthlyRent);
+    if (rent) answers.push(`The rent for ${lead.listing.title} is ${rent}/month.`);
+  }
+  if (/\b(address|location|where is|where's)\b/i.test(lower)) {
+    const address = [
+      lead.listing.unit.property.street,
+      lead.listing.unit.property.city,
+      lead.listing.unit.property.state,
+      lead.listing.unit.property.postalCode,
+    ]
+      .filter(Boolean)
+      .join(", ");
+    if (address) answers.push(`The address is ${address}.`);
+  }
+  if (/\b(pet|pets|dog|cat)\b/i.test(lower)) {
+    const petFact = facts.facts.find((f) => f.category === "PET_POLICY" && f.answer.trim());
+    if (petFact) {
+      answers.push(petFact.answer);
+    } else {
+      answers.push("I don't have a verified pet policy detail on file yet, but I can confirm it and follow up.");
+    }
+  }
+  if (/\b(parking)\b/i.test(lower)) {
+    const parkingFact = facts.facts.find((f) => f.category === "PARKING" && f.answer.trim());
+    if (parkingFact) {
+      answers.push(parkingFact.answer);
+    } else if (lead.listing.unit.property.parkingType) {
+      answers.push(`Parking type is ${lead.listing.unit.property.parkingType}.`);
+    }
+  }
+  if (/\b(utility|utilities)\b/i.test(lower)) {
+    const utilityFact = facts.facts.find((f) => f.category === "UTILITIES" && f.answer.trim());
+    if (utilityFact) {
+      answers.push(utilityFact.answer);
+    } else if (lead.listing.unit.property.utilityNotes?.trim()) {
+      answers.push(lead.listing.unit.property.utilityNotes.trim());
+    }
+  }
+  if (/\b(available|availability)\b/i.test(lower) && lead.listing.availableFrom) {
+    answers.push(
+      `Current availability starts ${lead.listing.availableFrom.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })}.`,
+    );
+  }
+
+  if (answers.length === 0) return null;
+  return `Hi ${lead.firstName},\n\n${answers.join(" ")}\n\nIf you'd like, I can also share the next available tour times.`;
 }
 
 async function sendFallbackReply(
@@ -97,6 +207,27 @@ export async function resolveAndExecuteStrategy(
         },
         data: { status: "RESOLVED", resolvedAt: new Date(), resolutionNote: "Auto-resolved: lead re-engaged via SMS" },
       });
+    }
+    if (input.phase === "reply") {
+      const latestInbound = await prisma.message.findFirst({
+        where: { conversationId: input.conversationId, direction: "INBOUND" },
+        orderBy: { sentAt: "desc" },
+        select: { body: true },
+      });
+      const directPropertyAnswer = await buildDirectPropertyAnswer(ctx, {
+        leadId: input.leadId,
+        latestInbound: latestInbound?.body ?? "",
+      });
+      if (directPropertyAnswer) {
+        await sendToProspect(ctx, {
+          leadId: input.leadId,
+          conversationId: input.conversationId,
+          body: directPropertyAnswer,
+          preferredChannel: "SMS",
+          fallbackLabel: "Direct property reply not sent — no deliverable channel configured",
+        });
+        return;
+      }
     }
     isSmsConversation = conversation?.channelType === ListingChannelType.SMS;
 
