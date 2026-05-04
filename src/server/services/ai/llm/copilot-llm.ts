@@ -109,6 +109,7 @@ export async function tryLlmReplyDraft(input: {
   listingTitle?: string;
   heuristicBody: string;
   propertyFactsBlock?: string;
+  listingContextBlock?: string;
 }): Promise<LlmDraftResult | null> {
   if (!aiEnabled()) return null;
   const model = process.env.OPENAI_COPILOT_MODEL ?? "gpt-4o-mini";
@@ -129,7 +130,7 @@ export async function tryLlmReplyDraft(input: {
           {
             role: "system",
             content:
-              "You draft concise, professional leasing replies as JSON: body (plain text, warm tone, ask at most two focused questions), contextNote (one line for the agent). No markdown. Acknowledge the prospect's latest preference/details explicitly (for example morning/afternoon timing, move-in timing, pets, budget) before proposing next steps. Give concrete next steps (for example offering to send 2-3 time slots) instead of vague promises. If property facts are provided, treat them as authoritative and do not invent policies or fees.",
+              "You draft concise, professional leasing replies as JSON: body (plain text, warm tone, ask at most two focused questions), contextNote (one line for the agent). No markdown. Acknowledge the prospect's latest preference/details explicitly (for example morning/afternoon timing, move-in timing, pets, budget) before proposing next steps. Give concrete next steps using exact values from listing details and available tour slots. NEVER output placeholders like [insert rent here] or [insert address]. If a fact is missing, say you'll confirm it and follow up. If available tour slots are provided, offer/confirm those exact slots.",
           },
           {
             role: "user",
@@ -138,6 +139,7 @@ export async function tryLlmReplyDraft(input: {
               listingTitle: input.listingTitle,
               heuristicDraft: input.heuristicBody,
               propertyFacts: input.propertyFactsBlock ?? "",
+              listingContext: input.listingContextBlock ?? "",
               transcript: input.transcript.slice(0, 12000),
             }),
           },

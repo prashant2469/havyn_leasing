@@ -7,6 +7,7 @@ import { generateContextualReply } from "@/server/services/ai/contextual-reply.s
 import { classifyInboundIntent } from "@/server/services/ai/intent-classifier.service";
 import { computeLeadStrength } from "@/server/services/ai/lead-strength.service";
 import { getQualificationCompleteness } from "@/server/services/leasing/qualification-score.service";
+import { createTour } from "@/server/services/leasing/tour.service";
 import {
   transitionAfterFirstOutreach,
   transitionOnQualificationThreshold,
@@ -46,6 +47,8 @@ export async function resolveAndExecuteStrategy(
 ): Promise<void> {
   let isSmsConversation = false;
   let willDeliverViaSms = false;
+  let tourBookedViaAi = false;
+  let selectedTourSlot: Date | null = null;
   try {
     const [lead, conversation] = await Promise.all([
       prisma.lead.findFirst({
@@ -132,17 +135,18 @@ export async function resolveAndExecuteStrategy(
     const generated =
       input.phase === "reply"
         ? await (async () => {
-            const contextual = await generateContextualReply(ctx, {
+            const contextualResult = await generateContextualReply(ctx, {
               conversationId: input.conversationId,
               leadId: input.leadId,
             });
+            selectedTourSlot = contextualResult.selectedTourSlot;
             return {
               ...strategyMessage,
-              body: contextual.body,
+              body: contextualResult.body,
               preferredChannel:
-                contextual.suggestedChannel === "SMS"
+                contextualResult.suggestedChannel === "SMS"
                   ? "SMS"
-                  : contextual.suggestedChannel === "EMAIL"
+                  : contextualResult.suggestedChannel === "EMAIL"
                     ? "EMAIL"
                     : strategyMessage.preferredChannel,
             } as const;
@@ -202,9 +206,38 @@ export async function resolveAndExecuteStrategy(
       fallbackLabel: "Strategy reply not sent — no deliverable channel configured",
     });
 
+    // If the user confirmed a concrete tour slot, create the tour immediately.
+    if (
+      input.phase === "reply" &&
+      strategy.intent === "TOUR_CONFIRMATION" &&
+      selectedTourSlot
+    ) {
+      const existingTour = await prisma.tour.findFirst({
+        where: {
+          leadId: input.leadId,
+          status: "SCHEDULED",
+          scheduledAt: selectedTourSlot,
+        },
+        select: { id: true },
+      });
+      if (!existingTour) {
+        const leadWithListing = await prisma.lead.findFirst({
+          where: { id: input.leadId, organizationId: ctx.organizationId },
+          select: { listingId: true },
+        });
+        await createTour(ctx, {
+          leadId: input.leadId,
+          listingId: leadWithListing?.listingId ?? undefined,
+          scheduledAt: selectedTourSlot,
+          notes: "Auto-booked from SMS tour confirmation",
+        });
+        tourBookedViaAi = true;
+      }
+    }
+
     if (input.phase === "first_outreach") {
       await transitionAfterFirstOutreach(ctx, input.leadId);
-    } else {
+    } else if (!tourBookedViaAi) {
       await transitionOnProspectReply(ctx, input.leadId);
     }
 
